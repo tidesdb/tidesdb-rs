@@ -230,8 +230,8 @@ impl TidesDB {
             enabled: c_stats.enabled != 0,
             total_entries: c_stats.total_entries,
             total_bytes: c_stats.total_bytes,
-            hits: c_stats.hits,
-            misses: c_stats.misses,
+            hits: c_stats.hits as usize,
+            misses: c_stats.misses as usize,
             hit_rate: c_stats.hit_rate,
             num_partitions: c_stats.num_partitions,
         })
