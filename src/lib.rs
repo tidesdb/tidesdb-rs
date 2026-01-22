@@ -151,25 +151,32 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         // Put
-        let txn = db.begin_transaction().unwrap();
-        txn.put(&cf, b"key", b"value", -1).unwrap();
-        txn.commit().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key", b"value", -1).unwrap();
+            txn.commit().unwrap();
+        }
 
         // Get
-        let txn = db.begin_transaction().unwrap();
-        let value = txn.get(&cf, b"key").unwrap();
-        assert_eq!(value, b"value");
-        drop(txn);
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"key").unwrap();
+            assert_eq!(value, b"value");
+        }
 
         // Delete
-        let txn = db.begin_transaction().unwrap();
-        txn.delete(&cf, b"key").unwrap();
-        txn.commit().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.delete(&cf, b"key").unwrap();
+            txn.commit().unwrap();
+        }
 
         // Verify deleted
-        let txn = db.begin_transaction().unwrap();
-        let result = txn.get(&cf, b"key");
-        assert!(result.is_err());
+        {
+            let txn = db.begin_transaction().unwrap();
+            let result = txn.get(&cf, b"key");
+            assert!(result.is_err());
+        }
     }
 
     #[test]
@@ -187,14 +194,18 @@ mod tests {
             .as_secs() as i64
             + 2;
 
-        let txn = db.begin_transaction().unwrap();
-        txn.put(&cf, b"temp_key", b"temp_value", ttl).unwrap();
-        txn.commit().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"temp_key", b"temp_value", ttl).unwrap();
+            txn.commit().unwrap();
+        }
 
         // Verify key exists before expiration
-        let txn = db.begin_transaction().unwrap();
-        let value = txn.get(&cf, b"temp_key").unwrap();
-        assert_eq!(value, b"temp_value");
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"temp_key").unwrap();
+            assert_eq!(value, b"temp_value");
+        }
     }
 
     #[test]
@@ -206,19 +217,23 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         // Multiple operations in one transaction
-        let txn = db.begin_transaction().unwrap();
-        txn.put(&cf, b"key1", b"value1", -1).unwrap();
-        txn.put(&cf, b"key2", b"value2", -1).unwrap();
-        txn.put(&cf, b"key3", b"value3", -1).unwrap();
-        txn.commit().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.put(&cf, b"key3", b"value3", -1).unwrap();
+            txn.commit().unwrap();
+        }
 
         // Verify all keys exist
-        let txn = db.begin_transaction().unwrap();
-        for i in 1..=3 {
-            let key = format!("key{}", i);
-            let expected_value = format!("value{}", i);
-            let value = txn.get(&cf, key.as_bytes()).unwrap();
-            assert_eq!(value, expected_value.as_bytes());
+        {
+            let txn = db.begin_transaction().unwrap();
+            for i in 1..=3 {
+                let key = format!("key{}", i);
+                let expected_value = format!("value{}", i);
+                let value = txn.get(&cf, key.as_bytes()).unwrap();
+                assert_eq!(value, expected_value.as_bytes());
+            }
         }
     }
 
@@ -230,14 +245,18 @@ mod tests {
         db.create_column_family("test_cf", cf_config).unwrap();
         let cf = db.get_column_family("test_cf").unwrap();
 
-        let txn = db.begin_transaction().unwrap();
-        txn.put(&cf, b"rollback_key", b"rollback_value", -1).unwrap();
-        txn.rollback().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"rollback_key", b"rollback_value", -1).unwrap();
+            txn.rollback().unwrap();
+        }
 
         // Verify key does not exist
-        let txn = db.begin_transaction().unwrap();
-        let result = txn.get(&cf, b"rollback_key");
-        assert!(result.is_err());
+        {
+            let txn = db.begin_transaction().unwrap();
+            let result = txn.get(&cf, b"rollback_key");
+            assert!(result.is_err());
+        }
     }
 
     #[test]
@@ -248,31 +267,35 @@ mod tests {
         db.create_column_family("test_cf", cf_config).unwrap();
         let cf = db.get_column_family("test_cf").unwrap();
 
-        let txn = db.begin_transaction().unwrap();
-        txn.put(&cf, b"key1", b"value1", -1).unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
 
-        txn.savepoint("sp1").unwrap();
-        txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.savepoint("sp1").unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
 
-        // Rollback to savepoint -- key2 is discarded, key1 remains
-        txn.rollback_to_savepoint("sp1").unwrap();
+            // Rollback to savepoint -- key2 is discarded, key1 remains
+            txn.rollback_to_savepoint("sp1").unwrap();
 
-        // Add different operation after rollback
-        txn.put(&cf, b"key3", b"value3", -1).unwrap();
+            // Add different operation after rollback
+            txn.put(&cf, b"key3", b"value3", -1).unwrap();
 
-        txn.commit().unwrap();
+            txn.commit().unwrap();
+        }
 
         // Verify results
-        let txn = db.begin_transaction().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
 
-        // key1 should exist
-        assert!(txn.get(&cf, b"key1").is_ok());
+            // key1 should exist
+            assert!(txn.get(&cf, b"key1").is_ok());
 
-        // key2 should not exist (rolled back)
-        assert!(txn.get(&cf, b"key2").is_err());
+            // key2 should not exist (rolled back)
+            assert!(txn.get(&cf, b"key2").is_err());
 
-        // key3 should exist
-        assert!(txn.get(&cf, b"key3").is_ok());
+            // key3 should exist
+            assert!(txn.get(&cf, b"key3").is_ok());
+        }
     }
 
     #[test]
@@ -284,42 +307,52 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         // Insert some data
-        let txn = db.begin_transaction().unwrap();
-        for i in 0..10 {
-            let key = format!("key{:02}", i);
-            let value = format!("value{}", i);
-            txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            for i in 0..10 {
+                let key = format!("key{:02}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
         }
-        txn.commit().unwrap();
 
         // Forward iteration
-        let txn = db.begin_transaction().unwrap();
-        let mut iter = txn.new_iterator(&cf).unwrap();
-        iter.seek_to_first().unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            let mut iter = txn.new_iterator(&cf).unwrap();
+            iter.seek_to_first().unwrap();
 
-        let mut count = 0;
-        while iter.is_valid() {
-            let key = iter.key().unwrap();
-            let value = iter.value().unwrap();
-            assert!(!key.is_empty());
-            assert!(!value.is_empty());
-            count += 1;
-            iter.next().unwrap();
+            let mut count = 0;
+            while iter.is_valid() {
+                let key = iter.key().unwrap();
+                let value = iter.value().unwrap();
+                assert!(!key.is_empty());
+                assert!(!value.is_empty());
+                count += 1;
+                iter.next().unwrap();
+            }
+            assert_eq!(count, 10);
+            // iter and txn dropped here in correct order
         }
-        assert_eq!(count, 10);
 
-        // Backward iteration
-        iter.seek_to_last().unwrap();
-        count = 0;
-        while iter.is_valid() {
-            let key = iter.key().unwrap();
-            let value = iter.value().unwrap();
-            assert!(!key.is_empty());
-            assert!(!value.is_empty());
-            count += 1;
-            iter.prev().unwrap();
+        // Backward iteration in separate scope
+        {
+            let txn = db.begin_transaction().unwrap();
+            let mut iter = txn.new_iterator(&cf).unwrap();
+            iter.seek_to_last().unwrap();
+
+            let mut count = 0;
+            while iter.is_valid() {
+                let key = iter.key().unwrap();
+                let value = iter.value().unwrap();
+                assert!(!key.is_empty());
+                assert!(!value.is_empty());
+                count += 1;
+                iter.prev().unwrap();
+            }
+            assert_eq!(count, 10);
         }
-        assert_eq!(count, 10);
     }
 
     #[test]
@@ -351,13 +384,15 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         // Insert some data
-        let txn = db.begin_transaction().unwrap();
-        for i in 0..100 {
-            let key = format!("key{}", i);
-            let value = format!("value{}", i);
-            txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            for i in 0..100 {
+                let key = format!("key{}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
         }
-        txn.commit().unwrap();
 
         let stats = cf.get_stats().unwrap();
         assert!(stats.num_levels >= 0);

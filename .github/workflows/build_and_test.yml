@@ -160,7 +160,7 @@ jobs:
         run: |
           cd tidesdb-rs
           cargo build --release
-          cargo test --release
+          cargo test --release -- --test-threads=1
 
       - name: Build and test (macOS)
         if: runner.os == 'macOS'
@@ -168,7 +168,7 @@ jobs:
           cd tidesdb-rs
           export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
           cargo build --release
-          cargo test --release
+          cargo test --release -- --test-threads=1
 
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
@@ -177,4 +177,4 @@ jobs:
           export PATH="/mingw64/bin:$PATH"
           cd tidesdb-rs
           cargo build --release
-          cargo test --release
+          cargo test --release -- --test-threads=1

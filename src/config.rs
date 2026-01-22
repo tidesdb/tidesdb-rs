@@ -16,7 +16,9 @@ pub enum CompressionAlgorithm {
     /// No compression
     #[default]
     None = ffi::NO_COMPRESSION,
-    /// LZ4 compression
+    /// Snappy compression
+    Snappy = ffi::SNAPPY_COMPRESSION,
+    /// LZ4 compression (default in C API)
     Lz4 = ffi::LZ4_COMPRESSION,
     /// Zstandard compression
     Zstd = ffi::ZSTD_COMPRESSION,
@@ -333,6 +335,7 @@ impl Default for ColumnFamilyConfig {
             dividing_level_offset: c_config.dividing_level_offset,
             klog_value_threshold: c_config.klog_value_threshold,
             compression_algorithm: match c_config.compression_algo {
+                ffi::SNAPPY_COMPRESSION => CompressionAlgorithm::Snappy,
                 ffi::LZ4_COMPRESSION => CompressionAlgorithm::Lz4,
                 ffi::ZSTD_COMPRESSION => CompressionAlgorithm::Zstd,
                 ffi::LZ4_FAST_COMPRESSION => CompressionAlgorithm::Lz4Fast,

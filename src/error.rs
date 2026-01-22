@@ -11,32 +11,31 @@ use thiserror::Error;
 
 /// Error codes returned by TidesDB operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
 pub enum ErrorCode {
     /// Memory allocation failed
-    Memory = ffi::TDB_ERR_MEMORY,
+    Memory,
     /// Invalid arguments provided
-    InvalidArgs = ffi::TDB_ERR_INVALID_ARGS,
+    InvalidArgs,
     /// Key or resource not found
-    NotFound = ffi::TDB_ERR_NOT_FOUND,
+    NotFound,
     /// I/O error occurred
-    Io = ffi::TDB_ERR_IO,
+    Io,
     /// Data corruption detected
-    Corruption = ffi::TDB_ERR_CORRUPTION,
+    Corruption,
     /// Resource already exists
-    Exists = ffi::TDB_ERR_EXISTS,
+    Exists,
     /// Transaction conflict
-    Conflict = ffi::TDB_ERR_CONFLICT,
+    Conflict,
     /// Key or value too large
-    TooLarge = ffi::TDB_ERR_TOO_LARGE,
+    TooLarge,
     /// Memory limit exceeded
-    MemoryLimit = ffi::TDB_ERR_MEMORY_LIMIT,
+    MemoryLimit,
     /// Invalid database handle
-    InvalidDb = ffi::TDB_ERR_INVALID_DB,
+    InvalidDb,
     /// Unknown error
-    Unknown = ffi::TDB_ERR_UNKNOWN,
+    Unknown,
     /// Database is locked
-    Locked = ffi::TDB_ERR_LOCKED,
+    Locked,
 }
 
 impl ErrorCode {

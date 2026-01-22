@@ -11,26 +11,27 @@ use libc::{c_char, c_double, c_float, c_int, c_void, size_t, time_t};
 /// Maximum comparator name length
 pub const TDB_MAX_COMPARATOR_NAME: usize = 64;
 
-/// Error codes
+/// Error codes (negative values as per C API)
 pub const TDB_SUCCESS: c_int = 0;
-pub const TDB_ERR_MEMORY: c_int = 1;
-pub const TDB_ERR_INVALID_ARGS: c_int = 2;
-pub const TDB_ERR_NOT_FOUND: c_int = 3;
-pub const TDB_ERR_IO: c_int = 4;
-pub const TDB_ERR_CORRUPTION: c_int = 5;
-pub const TDB_ERR_EXISTS: c_int = 6;
-pub const TDB_ERR_CONFLICT: c_int = 7;
-pub const TDB_ERR_TOO_LARGE: c_int = 8;
-pub const TDB_ERR_MEMORY_LIMIT: c_int = 9;
-pub const TDB_ERR_INVALID_DB: c_int = 10;
-pub const TDB_ERR_UNKNOWN: c_int = 11;
-pub const TDB_ERR_LOCKED: c_int = 12;
+pub const TDB_ERR_MEMORY: c_int = -1;
+pub const TDB_ERR_INVALID_ARGS: c_int = -2;
+pub const TDB_ERR_NOT_FOUND: c_int = -3;
+pub const TDB_ERR_IO: c_int = -4;
+pub const TDB_ERR_CORRUPTION: c_int = -5;
+pub const TDB_ERR_EXISTS: c_int = -6;
+pub const TDB_ERR_CONFLICT: c_int = -7;
+pub const TDB_ERR_TOO_LARGE: c_int = -8;
+pub const TDB_ERR_MEMORY_LIMIT: c_int = -9;
+pub const TDB_ERR_INVALID_DB: c_int = -10;
+pub const TDB_ERR_UNKNOWN: c_int = -11;
+pub const TDB_ERR_LOCKED: c_int = -12;
 
-/// Compression algorithms
+/// Compression algorithms (values from C API documentation)
 pub const NO_COMPRESSION: c_int = 0;
-pub const LZ4_COMPRESSION: c_int = 1;
-pub const ZSTD_COMPRESSION: c_int = 2;
-pub const LZ4_FAST_COMPRESSION: c_int = 3;
+pub const SNAPPY_COMPRESSION: c_int = 1;
+pub const LZ4_COMPRESSION: c_int = 2;
+pub const ZSTD_COMPRESSION: c_int = 3;
+pub const LZ4_FAST_COMPRESSION: c_int = 4;
 
 /// Sync modes
 pub const TDB_SYNC_NONE: c_int = 0;
