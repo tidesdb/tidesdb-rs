@@ -4,7 +4,7 @@
 // Licensed under the Mozilla Public License, v. 2.0 (the "License");
 
 fn main() {
-    // Try pkg-config first
+    // Try pkg-config first (works on Linux/macOS)
     if pkg_config::probe_library("tidesdb").is_ok() {
         return;
     }
@@ -23,9 +23,15 @@ fn main() {
         println!("cargo:rustc-link-search=/opt/homebrew/lib");
     }
     
-    // Windows MinGW paths
+    // Windows MinGW paths and dependencies
+    // libtidesdb.a is a static library that depends on compression libraries
     #[cfg(target_os = "windows")]
     {
         println!("cargo:rustc-link-search=C:/msys64/mingw64/lib");
+        
+        // Link compression libraries that tidesdb depends on
+        println!("cargo:rustc-link-lib=zstd");
+        println!("cargo:rustc-link-lib=lz4");
+        println!("cargo:rustc-link-lib=snappy");
     }
 }

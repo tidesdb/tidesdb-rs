@@ -36,7 +36,7 @@ pub struct Transaction {
     committed: bool,
 }
 
-// Safety: Transaction uses internal locking for thread safety
+// Transaction uses internal locking for thread safety
 unsafe impl Send for Transaction {}
 
 impl Transaction {

@@ -47,7 +47,7 @@ pub struct Iterator {
     iter: *mut ffi::tidesdb_iter_t,
 }
 
-// Safety: Iterator uses internal locking for thread safety
+// Iterator uses internal locking for thread safety
 unsafe impl Send for Iterator {}
 
 impl Iterator {

@@ -46,7 +46,7 @@ pub struct TidesDB {
     db: *mut ffi::tidesdb_t,
 }
 
-// Safety: TidesDB uses internal locking for thread safety
+// TidesDB uses internal locking for thread safety
 unsafe impl Send for TidesDB {}
 unsafe impl Sync for TidesDB {}
 
@@ -284,7 +284,7 @@ pub struct ColumnFamily {
     name: String,
 }
 
-// Safety: ColumnFamily uses internal locking for thread safety
+// ColumnFamily uses internal locking for thread safety
 unsafe impl Send for ColumnFamily {}
 unsafe impl Sync for ColumnFamily {}
 
