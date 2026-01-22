@@ -1,0 +1,30 @@
+[package]
+name = "tidesdb"
+version = "0.2.0"
+edition = "2021"
+authors = ["TidesDB <contact@tidesdb.com>"]
+description = "Safe Rust bindings for TidesDB - A high-performance embedded key-value storage engine"
+license = "MPL-2.0"
+repository = "https://github.com/tidesdb/tidesdb-rs"
+homepage = "https://tidesdb.com"
+documentation = "https://docs.rs/tidesdb"
+readme = "README.md"
+keywords = ["database", "key-value", "storage", "lsm-tree", "embedded"]
+categories = ["database", "data-structures"]
+
+[dependencies]
+libc = "0.2"
+thiserror = "1.0"
+
+[build-dependencies]
+pkg-config = "0.3"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[features]
+default = []
+
+[lib]
+name = "tidesdb"
+path = "src/lib.rs"

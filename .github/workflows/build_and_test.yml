@@ -1,0 +1,180 @@
+name: TidesDB Rust CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+          - os: macos-latest
+            name: macOS x64
+          - os: windows-latest
+            name: Windows x64
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - name: Checkout tidesdb-rs repo
+        uses: actions/checkout@v4
+        with:
+          repository: tidesdb/tidesdb-rs
+          path: tidesdb-rs
+
+      - name: Checkout tidesdb repo
+        uses: actions/checkout@v4
+        with:
+          repository: tidesdb/tidesdb
+          path: tidesdb
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install -y libzstd-dev liblz4-dev libsnappy-dev build-essential cmake pkg-config
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install zstd lz4 snappy
+
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-zstd
+            mingw-w64-x86_64-lz4
+            mingw-w64-x86_64-snappy
+            mingw-w64-x86_64-rust
+
+      - name: Configure and build TidesDB (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd tidesdb
+          cmake -S . -B build -DTIDESDB_BUILD_TESTS=OFF -DTIDESDB_WITH_SANITIZER=OFF
+          cmake --build build --config Release
+          sudo cmake --install build
+          sudo ldconfig
+
+      - name: Configure and build TidesDB (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd tidesdb
+          export HOMEBREW_PREFIX=$(brew --prefix)
+          cmake -S . -B build \
+            -DTIDESDB_BUILD_TESTS=OFF \
+            -DTIDESDB_WITH_SANITIZER=OFF \
+            -DCMAKE_PREFIX_PATH="${HOMEBREW_PREFIX}"
+          cmake --build build --config Release
+          sudo cmake --install build
+
+      - name: Create CMake config files for MSYS2 packages (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          MINGW_PREFIX_WIN=$(cygpath -m /mingw64)
+
+          mkdir -p /mingw64/lib/cmake/lz4
+          mkdir -p /mingw64/lib/cmake/zstd
+          mkdir -p /mingw64/lib/cmake/Snappy
+          mkdir -p /mingw64/lib/cmake/PThreads4W
+
+          cat > /mingw64/lib/cmake/lz4/lz4-config.cmake << EOF
+          if(NOT TARGET lz4::lz4)
+            add_library(lz4::lz4 SHARED IMPORTED)
+            set_target_properties(lz4::lz4 PROPERTIES
+              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/liblz4.dll"
+              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/liblz4.dll.a"
+              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
+            )
+          endif()
+          EOF
+
+          cat > /mingw64/lib/cmake/zstd/zstd-config.cmake << EOF
+          if(NOT TARGET zstd::libzstd_shared)
+            add_library(zstd::libzstd_shared SHARED IMPORTED)
+            set_target_properties(zstd::libzstd_shared PROPERTIES
+              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libzstd.dll"
+              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libzstd.dll.a"
+              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
+            )
+          endif()
+          EOF
+
+          cat > /mingw64/lib/cmake/Snappy/Snappy-config.cmake << EOF
+          if(NOT TARGET Snappy::snappy)
+            add_library(Snappy::snappy SHARED IMPORTED)
+            set_target_properties(Snappy::snappy PROPERTIES
+              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libsnappy.dll"
+              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libsnappy.dll.a"
+              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
+            )
+          endif()
+          EOF
+
+          cat > /mingw64/lib/cmake/PThreads4W/PThreads4W-config.cmake << EOF
+          if(NOT TARGET PThreads4W::PThreads4W)
+            add_library(PThreads4W::PThreads4W SHARED IMPORTED)
+            set_target_properties(PThreads4W::PThreads4W PROPERTIES
+              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libwinpthread-1.dll"
+              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libpthread.dll.a"
+              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
+            )
+          endif()
+          EOF
+
+      - name: Configure and build TidesDB (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cd tidesdb
+          cmake -G "MinGW Makefiles" \
+            -DCMAKE_MAKE_PROGRAM=mingw32-make \
+            -DCMAKE_PREFIX_PATH=/mingw64 \
+            -DTIDESDB_WITH_SANITIZER=OFF \
+            -DTIDESDB_BUILD_TESTS=OFF \
+            -S . -B build
+          cmake --build build --config Release
+          cmake --install build --prefix /mingw64
+
+      - name: Install Rust toolchain
+        if: runner.os != 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd tidesdb-rs
+          cargo build --release
+          cargo test --release
+
+      - name: Build and test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd tidesdb-rs
+          export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
+          cargo build --release
+          cargo test --release
+
+      - name: Build and test (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          cd tidesdb-rs
+          cargo build --release
+          cargo test --release
