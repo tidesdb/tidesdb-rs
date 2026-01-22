@@ -106,15 +106,31 @@ impl Iterator {
     }
 
     /// Moves the iterator to the next entry.
+    ///
+    /// Returns Ok(()) even when reaching the end of iteration.
+    /// Use `is_valid()` to check if the iterator is still positioned at a valid entry.
     pub fn next(&mut self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_iter_next(self.iter) };
-        check_result(result, "failed to move to next")
+        // NOT_FOUND is expected when reaching end of iteration
+        if result == ffi::TDB_ERR_NOT_FOUND || result == ffi::TDB_SUCCESS {
+            Ok(())
+        } else {
+            Err(crate::error::Error::from_code(result, "failed to move to next"))
+        }
     }
 
     /// Moves the iterator to the previous entry.
+    ///
+    /// Returns Ok(()) even when reaching the beginning of iteration.
+    /// Use `is_valid()` to check if the iterator is still positioned at a valid entry.
     pub fn prev(&mut self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_iter_prev(self.iter) };
-        check_result(result, "failed to move to prev")
+        // NOT_FOUND is expected when reaching beginning of iteration
+        if result == ffi::TDB_ERR_NOT_FOUND || result == ffi::TDB_SUCCESS {
+            Ok(())
+        } else {
+            Err(crate::error::Error::from_code(result, "failed to move to prev"))
+        }
     }
 
     /// Retrieves the current key from the iterator.
