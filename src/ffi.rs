@@ -10,6 +10,8 @@ use libc::{c_char, c_double, c_float, c_int, c_void, size_t, time_t};
 
 /// Maximum comparator name length
 pub const TDB_MAX_COMPARATOR_NAME: usize = 64;
+/// Maximum comparator context string length
+pub const TDB_MAX_COMPARATOR_CTX: usize = 256;
 
 /// Error codes (negative values as per C API)
 pub const TDB_SUCCESS: c_int = 0;
@@ -102,6 +104,9 @@ pub struct tidesdb_column_family_config_t {
     pub sync_mode: c_int,
     pub sync_interval_us: u64,
     pub comparator_name: [c_char; TDB_MAX_COMPARATOR_NAME],
+    pub comparator_ctx_str: [c_char; TDB_MAX_COMPARATOR_CTX],
+    pub comparator_fn_cached: *mut c_void,
+    pub comparator_ctx_cached: *mut c_void,
     pub skip_list_max_level: c_int,
     pub skip_list_probability: c_float,
     pub default_isolation_level: c_int,
@@ -126,8 +131,8 @@ pub struct tidesdb_cache_stats_t {
     pub enabled: c_int,
     pub total_entries: size_t,
     pub total_bytes: size_t,
-    pub hits: size_t,
-    pub misses: size_t,
+    pub hits: u64,
+    pub misses: u64,
     pub hit_rate: c_double,
     pub num_partitions: size_t,
 }
