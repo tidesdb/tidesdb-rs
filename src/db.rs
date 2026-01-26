@@ -102,6 +102,23 @@ impl TidesDB {
         check_result(result, "failed to drop column family")
     }
 
+    /// Atomically renames a column family and its underlying directory.
+    /// Waits for any in-progress flush/compaction to complete before renaming.
+    ///
+    /// # Arguments
+    ///
+    /// * `old_name` - Current name of the column family
+    /// * `new_name` - New name for the column family
+    pub fn rename_column_family(&self, old_name: &str, new_name: &str) -> Result<()> {
+        let c_old_name = CString::new(old_name)?;
+        let c_new_name = CString::new(new_name)?;
+
+        let result = unsafe {
+            ffi::tidesdb_rename_column_family(self.db, c_old_name.as_ptr(), c_new_name.as_ptr())
+        };
+        check_result(result, "failed to rename column family")
+    }
+
     /// Retrieves a column family by name.
     ///
     /// # Arguments
@@ -263,6 +280,18 @@ impl TidesDB {
         };
         check_result(result, "failed to register comparator")
     }
+
+    /// Creates a backup of the database to the specified directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - The directory to backup to
+    pub fn backup(&self, dir: &str) -> Result<()> {
+        let c_dir = CString::new(dir)?;
+
+        let result = unsafe { ffi::tidesdb_backup(self.db, c_dir.as_ptr() as *mut c_char) };
+        check_result(result, "failed to backup database")
+    }
 }
 
 impl Drop for TidesDB {
@@ -323,6 +352,20 @@ impl ColumnFamily {
                 }
             }
 
+            let mut level_key_counts = Vec::new();
+            if num_levels > 0 && !(*c_stats).level_key_counts.is_null() {
+                for i in 0..num_levels as isize {
+                    level_key_counts.push(*(*c_stats).level_key_counts.offset(i));
+                }
+            }
+
+            let total_keys = (*c_stats).total_keys;
+            let total_data_size = (*c_stats).total_data_size;
+            let avg_key_size = (*c_stats).avg_key_size;
+            let avg_value_size = (*c_stats).avg_value_size;
+            let read_amp = (*c_stats).read_amp;
+            let hit_rate = (*c_stats).hit_rate;
+
             ffi::tidesdb_free_stats(c_stats);
 
             crate::stats::Stats {
@@ -330,7 +373,14 @@ impl ColumnFamily {
                 memtable_size,
                 level_sizes,
                 level_num_sstables,
-                config: None, // TODO: Parse config if needed
+                config: None,
+                total_keys,
+                total_data_size,
+                avg_key_size,
+                avg_value_size,
+                level_key_counts,
+                read_amp,
+                hit_rate,
             }
         };
 
@@ -347,5 +397,37 @@ impl ColumnFamily {
     pub fn flush_memtable(&self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_flush_memtable(self.cf) };
         check_result(result, "failed to flush memtable")
+    }
+
+    /// Checks if this column family has a flush operation in progress.
+    pub fn is_flushing(&self) -> bool {
+        unsafe { ffi::tidesdb_is_flushing(self.cf) != 0 }
+    }
+
+    /// Checks if this column family has a compaction operation in progress.
+    pub fn is_compacting(&self) -> bool {
+        unsafe { ffi::tidesdb_is_compacting(self.cf) != 0 }
+    }
+
+    /// Updates the runtime configuration for this column family.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The new configuration
+    /// * `persist_to_disk` - Whether to persist the configuration to disk
+    pub fn update_runtime_config(
+        &self,
+        config: &ColumnFamilyConfig,
+        persist_to_disk: bool,
+    ) -> Result<()> {
+        let c_config = config.to_c_config();
+        let result = unsafe {
+            ffi::tidesdb_cf_update_runtime_config(
+                self.cf,
+                &c_config,
+                if persist_to_disk { 1 } else { 0 },
+            )
+        };
+        check_result(result, "failed to update runtime config")
     }
 }

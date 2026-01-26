@@ -5,6 +5,7 @@
 
 //! Configuration types for TidesDB.
 
+use crate::error::{check_result, Result};
 use crate::ffi;
 use std::ffi::CString;
 use std::path::Path;
@@ -272,6 +273,163 @@ impl ColumnFamilyConfig {
     pub fn default_isolation_level(mut self, level: IsolationLevel) -> Self {
         self.default_isolation_level = level;
         self
+    }
+
+    /// Set the dividing level offset.
+    pub fn dividing_level_offset(mut self, offset: i32) -> Self {
+        self.dividing_level_offset = offset;
+        self
+    }
+
+    /// Set the klog value threshold.
+    pub fn klog_value_threshold(mut self, threshold: usize) -> Self {
+        self.klog_value_threshold = threshold;
+        self
+    }
+
+    /// Set the index sample ratio.
+    pub fn index_sample_ratio(mut self, ratio: i32) -> Self {
+        self.index_sample_ratio = ratio;
+        self
+    }
+
+    /// Set the block index prefix length.
+    pub fn block_index_prefix_len(mut self, len: i32) -> Self {
+        self.block_index_prefix_len = len;
+        self
+    }
+
+    /// Set the comparator name.
+    pub fn comparator_name(mut self, name: &str) -> Self {
+        self.comparator_name = name.to_string();
+        self
+    }
+
+    /// Set the skip list max level.
+    pub fn skip_list_max_level(mut self, level: i32) -> Self {
+        self.skip_list_max_level = level;
+        self
+    }
+
+    /// Set the skip list probability.
+    pub fn skip_list_probability(mut self, prob: f32) -> Self {
+        self.skip_list_probability = prob;
+        self
+    }
+
+    /// Set the minimum disk space required.
+    pub fn min_disk_space(mut self, space: u64) -> Self {
+        self.min_disk_space = space;
+        self
+    }
+
+    /// Set the L1 file count trigger for compaction.
+    pub fn l1_file_count_trigger(mut self, trigger: i32) -> Self {
+        self.l1_file_count_trigger = trigger;
+        self
+    }
+
+    /// Set the L0 queue stall threshold for backpressure.
+    pub fn l0_queue_stall_threshold(mut self, threshold: i32) -> Self {
+        self.l0_queue_stall_threshold = threshold;
+        self
+    }
+
+    /// Load configuration from an INI file.
+    ///
+    /// # Arguments
+    ///
+    /// * `ini_file` - Path to the INI file
+    /// * `section_name` - Section name in the INI file
+    pub fn load_from_ini(ini_file: &str, section_name: &str) -> Result<Self> {
+        let c_ini_file = CString::new(ini_file)?;
+        let c_section_name = CString::new(section_name)?;
+        let mut c_config = unsafe { ffi::tidesdb_default_column_family_config() };
+
+        let result = unsafe {
+            ffi::tidesdb_cf_config_load_from_ini(
+                c_ini_file.as_ptr(),
+                c_section_name.as_ptr(),
+                &mut c_config,
+            )
+        };
+        check_result(result, "failed to load config from INI")?;
+
+        Ok(Self::from_c_config(&c_config))
+    }
+
+    /// Save configuration to an INI file.
+    ///
+    /// # Arguments
+    ///
+    /// * `ini_file` - Path to the INI file
+    /// * `section_name` - Section name in the INI file
+    pub fn save_to_ini(&self, ini_file: &str, section_name: &str) -> Result<()> {
+        let c_ini_file = CString::new(ini_file)?;
+        let c_section_name = CString::new(section_name)?;
+        let c_config = self.to_c_config();
+
+        let result = unsafe {
+            ffi::tidesdb_cf_config_save_to_ini(
+                c_ini_file.as_ptr(),
+                c_section_name.as_ptr(),
+                &c_config,
+            )
+        };
+        check_result(result, "failed to save config to INI")
+    }
+
+    /// Create a ColumnFamilyConfig from a C config struct.
+    fn from_c_config(c_config: &ffi::tidesdb_column_family_config_t) -> Self {
+        let mut comparator_name = String::new();
+        let name_bytes: Vec<u8> = c_config
+            .comparator_name
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        if let Ok(s) = std::str::from_utf8(&name_bytes) {
+            comparator_name = s.to_string();
+        }
+
+        ColumnFamilyConfig {
+            write_buffer_size: c_config.write_buffer_size,
+            level_size_ratio: c_config.level_size_ratio,
+            min_levels: c_config.min_levels,
+            dividing_level_offset: c_config.dividing_level_offset,
+            klog_value_threshold: c_config.klog_value_threshold,
+            compression_algorithm: match c_config.compression_algo {
+                ffi::SNAPPY_COMPRESSION => CompressionAlgorithm::Snappy,
+                ffi::LZ4_COMPRESSION => CompressionAlgorithm::Lz4,
+                ffi::ZSTD_COMPRESSION => CompressionAlgorithm::Zstd,
+                ffi::LZ4_FAST_COMPRESSION => CompressionAlgorithm::Lz4Fast,
+                _ => CompressionAlgorithm::None,
+            },
+            enable_bloom_filter: c_config.enable_bloom_filter != 0,
+            bloom_fpr: c_config.bloom_fpr,
+            enable_block_indexes: c_config.enable_block_indexes != 0,
+            index_sample_ratio: c_config.index_sample_ratio,
+            block_index_prefix_len: c_config.block_index_prefix_len,
+            sync_mode: match c_config.sync_mode {
+                ffi::TDB_SYNC_FULL => SyncMode::Full,
+                ffi::TDB_SYNC_INTERVAL => SyncMode::Interval,
+                _ => SyncMode::None,
+            },
+            sync_interval_us: c_config.sync_interval_us,
+            comparator_name,
+            skip_list_max_level: c_config.skip_list_max_level,
+            skip_list_probability: c_config.skip_list_probability,
+            default_isolation_level: match c_config.default_isolation_level {
+                ffi::TDB_ISOLATION_READ_UNCOMMITTED => IsolationLevel::ReadUncommitted,
+                ffi::TDB_ISOLATION_REPEATABLE_READ => IsolationLevel::RepeatableRead,
+                ffi::TDB_ISOLATION_SNAPSHOT => IsolationLevel::Snapshot,
+                ffi::TDB_ISOLATION_SERIALIZABLE => IsolationLevel::Serializable,
+                _ => IsolationLevel::ReadCommitted,
+            },
+            min_disk_space: c_config.min_disk_space,
+            l1_file_count_trigger: c_config.l1_file_count_trigger,
+            l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
+        }
     }
 
     /// Convert to C configuration struct.

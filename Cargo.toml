@@ -1,6 +1,6 @@
 [package]
 name = "tidesdb"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["TidesDB <contact@tidesdb.com>"]
 description = "Safe Rust bindings for TidesDB - A high-performance embedded key-value storage engine"
