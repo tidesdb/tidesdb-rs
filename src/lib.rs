@@ -428,4 +428,157 @@ mod tests {
         let cf = db.get_column_family("custom_cf").unwrap();
         assert_eq!(cf.name(), "custom_cf");
     }
+
+    #[test]
+    fn test_rename_column_family() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("old_name", cf_config).unwrap();
+
+        // Insert some data
+        {
+            let cf = db.get_column_family("old_name").unwrap();
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key", b"value", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Rename the column family
+        db.rename_column_family("old_name", "new_name").unwrap();
+
+        // Verify old name no longer exists
+        assert!(db.get_column_family("old_name").is_err());
+
+        // Verify new name exists and data is preserved
+        let cf = db.get_column_family("new_name").unwrap();
+        let txn = db.begin_transaction().unwrap();
+        let value = txn.get(&cf, b"key").unwrap();
+        assert_eq!(value, b"value");
+    }
+
+    #[test]
+    fn test_backup() {
+        let (db, temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+
+        // Insert some data
+        {
+            let cf = db.get_column_family("test_cf").unwrap();
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key", b"value", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Create backup directory
+        let backup_dir = temp_dir.path().join("backup");
+        db.backup(backup_dir.to_str().unwrap()).unwrap();
+
+        // Verify backup directory exists
+        assert!(backup_dir.exists());
+    }
+
+    #[test]
+    fn test_is_flushing_compacting() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // These should return false when no operations are in progress
+        // (just testing that the methods work without error)
+        let _ = cf.is_flushing();
+        let _ = cf.is_compacting();
+    }
+
+    #[test]
+    fn test_update_runtime_config() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Create new configuration
+        let new_config = ColumnFamilyConfig::new()
+            .write_buffer_size(256 * 1024 * 1024)
+            .compression_algorithm(CompressionAlgorithm::Zstd);
+
+        // Update runtime config
+        cf.update_runtime_config(&new_config, false).unwrap();
+    }
+
+    #[test]
+    fn test_extended_stats() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let txn = db.begin_transaction().unwrap();
+            for i in 0..100 {
+                let key = format!("key{}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        let stats = cf.get_stats().unwrap();
+
+        // Verify extended stats fields exist and are accessible
+        assert!(stats.num_levels >= 0);
+        let _ = stats.total_keys;
+        let _ = stats.total_data_size;
+        let _ = stats.avg_key_size;
+        let _ = stats.avg_value_size;
+        let _ = stats.read_amp;
+        let _ = stats.hit_rate;
+        let _ = stats.level_key_counts;
+    }
+
+    #[test]
+    fn test_column_family_config_builders() {
+        // Test all the new builder methods
+        let config = ColumnFamilyConfig::new()
+            .write_buffer_size(64 * 1024 * 1024)
+            .level_size_ratio(10)
+            .min_levels(4)
+            .dividing_level_offset(2)
+            .klog_value_threshold(1024)
+            .compression_algorithm(CompressionAlgorithm::Lz4)
+            .enable_bloom_filter(true)
+            .bloom_fpr(0.01)
+            .enable_block_indexes(true)
+            .index_sample_ratio(16)
+            .block_index_prefix_len(4)
+            .sync_mode(SyncMode::Interval)
+            .sync_interval_us(128000)
+            .comparator_name("memcmp")
+            .skip_list_max_level(12)
+            .skip_list_probability(0.25)
+            .default_isolation_level(IsolationLevel::ReadCommitted)
+            .min_disk_space(1024 * 1024 * 1024)
+            .l1_file_count_trigger(4)
+            .l0_queue_stall_threshold(8);
+
+        // Verify some values
+        assert_eq!(config.write_buffer_size, 64 * 1024 * 1024);
+        assert_eq!(config.min_levels, 4);
+        assert_eq!(config.dividing_level_offset, 2);
+        assert_eq!(config.klog_value_threshold, 1024);
+        assert_eq!(config.index_sample_ratio, 16);
+        assert_eq!(config.block_index_prefix_len, 4);
+        assert_eq!(config.comparator_name, "memcmp");
+        assert_eq!(config.skip_list_max_level, 12);
+        assert_eq!(config.min_disk_space, 1024 * 1024 * 1024);
+        assert_eq!(config.l1_file_count_trigger, 4);
+        assert_eq!(config.l0_queue_stall_threshold, 8);
+    }
 }

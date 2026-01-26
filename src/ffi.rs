@@ -46,7 +46,7 @@ pub const TDB_LOG_INFO: c_int = 1;
 pub const TDB_LOG_WARN: c_int = 2;
 pub const TDB_LOG_ERROR: c_int = 3;
 pub const TDB_LOG_FATAL: c_int = 4;
-pub const TDB_LOG_NONE: c_int = 5;
+pub const TDB_LOG_NONE: c_int = 99;
 
 /// Isolation levels
 pub const TDB_ISOLATION_READ_UNCOMMITTED: c_int = 0;
@@ -123,6 +123,13 @@ pub struct tidesdb_stats_t {
     pub level_sizes: *mut size_t,
     pub level_num_sstables: *mut c_int,
     pub config: *mut tidesdb_column_family_config_t,
+    pub total_keys: u64,
+    pub total_data_size: u64,
+    pub avg_key_size: c_double,
+    pub avg_value_size: c_double,
+    pub level_key_counts: *mut u64,
+    pub read_amp: c_double,
+    pub hit_rate: c_double,
 }
 
 /// Cache statistics
@@ -257,4 +264,51 @@ extern "C" {
         value_len: *mut size_t,
     ) -> c_int;
     pub fn tidesdb_iter_free(iter: *mut tidesdb_iter_t);
+
+    // Column family rename
+    pub fn tidesdb_rename_column_family(
+        db: *mut tidesdb_t,
+        old_name: *const c_char,
+        new_name: *const c_char,
+    ) -> c_int;
+
+    // Default config
+    pub fn tidesdb_default_config() -> tidesdb_config_t;
+
+    // Backup
+    pub fn tidesdb_backup(db: *mut tidesdb_t, dir: *mut c_char) -> c_int;
+
+    // Flushing/compacting status
+    pub fn tidesdb_is_flushing(cf: *mut tidesdb_column_family_t) -> c_int;
+    pub fn tidesdb_is_compacting(cf: *mut tidesdb_column_family_t) -> c_int;
+
+    // Config INI operations
+    pub fn tidesdb_cf_config_load_from_ini(
+        ini_file: *const c_char,
+        section_name: *const c_char,
+        config: *mut tidesdb_column_family_config_t,
+    ) -> c_int;
+    pub fn tidesdb_cf_config_save_to_ini(
+        ini_file: *const c_char,
+        section_name: *const c_char,
+        config: *const tidesdb_column_family_config_t,
+    ) -> c_int;
+
+    // Runtime config update
+    pub fn tidesdb_cf_update_runtime_config(
+        cf: *mut tidesdb_column_family_t,
+        new_config: *const tidesdb_column_family_config_t,
+        persist_to_disk: c_int,
+    ) -> c_int;
+
+    // Get comparator
+    pub fn tidesdb_get_comparator(
+        db: *mut tidesdb_t,
+        name: *const c_char,
+        fn_out: *mut *const c_void,
+        ctx_out: *mut *mut c_void,
+    ) -> c_int;
+
+    // Generic free
+    pub fn tidesdb_free(ptr: *mut c_void);
 }

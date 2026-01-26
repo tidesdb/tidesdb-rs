@@ -20,6 +20,20 @@ pub struct Stats {
     pub level_num_sstables: Vec<i32>,
     /// Column family configuration (if available)
     pub config: Option<ColumnFamilyConfig>,
+    /// Total number of keys across memtable and all sstables
+    pub total_keys: u64,
+    /// Total data size (klog + vlog) across all sstables
+    pub total_data_size: u64,
+    /// Average key size in bytes
+    pub avg_key_size: f64,
+    /// Average value size in bytes
+    pub avg_value_size: f64,
+    /// Number of keys per level
+    pub level_key_counts: Vec<u64>,
+    /// Read amplification (point lookup cost multiplier)
+    pub read_amp: f64,
+    /// Cache hit rate (0.0 if cache disabled)
+    pub hit_rate: f64,
 }
 
 /// Statistics for the block cache.
