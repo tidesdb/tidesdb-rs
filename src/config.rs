@@ -91,6 +91,10 @@ pub struct Config {
     pub block_cache_size: usize,
     /// Maximum number of open SSTable files
     pub max_open_sstables: usize,
+    /// Write logs to file instead of stderr
+    pub log_to_file: bool,
+    /// Log file truncation threshold in bytes (0 = no truncation)
+    pub log_truncation_at: usize,
 }
 
 impl Config {
@@ -103,6 +107,8 @@ impl Config {
             log_level: LogLevel::Info,
             block_cache_size: 64 * 1024 * 1024, // 64MB
             max_open_sstables: 256,
+            log_to_file: false,
+            log_truncation_at: 24 * 1024 * 1024, // 24MB
         }
     }
 
@@ -136,6 +142,18 @@ impl Config {
         self
     }
 
+    /// Enable writing logs to a file instead of stderr.
+    pub fn log_to_file(mut self, enable: bool) -> Self {
+        self.log_to_file = enable;
+        self
+    }
+
+    /// Set the log file truncation threshold in bytes (0 = no truncation).
+    pub fn log_truncation_at(mut self, size: usize) -> Self {
+        self.log_truncation_at = size;
+        self
+    }
+
     /// Convert to C configuration struct.
     pub(crate) fn to_c_config(&self) -> crate::error::Result<(ffi::tidesdb_config_t, CString)> {
         let c_path = CString::new(self.db_path.as_str())?;
@@ -146,6 +164,8 @@ impl Config {
             log_level: self.log_level as i32,
             block_cache_size: self.block_cache_size,
             max_open_sstables: self.max_open_sstables,
+            log_to_file: if self.log_to_file { 1 } else { 0 },
+            log_truncation_at: self.log_truncation_at,
         };
         Ok((config, c_path))
     }
@@ -160,6 +180,8 @@ impl Default for Config {
             log_level: LogLevel::Info,
             block_cache_size: 64 * 1024 * 1024,
             max_open_sstables: 256,
+            log_to_file: false,
+            log_truncation_at: 24 * 1024 * 1024,
         }
     }
 }

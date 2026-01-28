@@ -85,6 +85,8 @@ pub struct tidesdb_config_t {
     pub log_level: c_int,
     pub block_cache_size: size_t,
     pub max_open_sstables: size_t,
+    pub log_to_file: c_int,
+    pub log_truncation_at: size_t,
 }
 
 /// Column family configuration
