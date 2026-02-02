@@ -365,6 +365,10 @@ impl ColumnFamily {
             let avg_value_size = (*c_stats).avg_value_size;
             let read_amp = (*c_stats).read_amp;
             let hit_rate = (*c_stats).hit_rate;
+            let use_btree = (*c_stats).use_btree != 0;
+            let btree_total_nodes = (*c_stats).btree_total_nodes;
+            let btree_max_height = (*c_stats).btree_max_height;
+            let btree_avg_height = (*c_stats).btree_avg_height;
 
             ffi::tidesdb_free_stats(c_stats);
 
@@ -381,6 +385,10 @@ impl ColumnFamily {
                 level_key_counts,
                 read_amp,
                 hit_rate,
+                use_btree,
+                btree_total_nodes,
+                btree_max_height,
+                btree_avg_height,
             }
         };
 
