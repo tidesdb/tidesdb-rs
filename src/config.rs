@@ -229,6 +229,8 @@ pub struct ColumnFamilyConfig {
     pub l1_file_count_trigger: i32,
     /// L0 queue stall threshold
     pub l0_queue_stall_threshold: i32,
+    /// Use B+tree format for klog (default: false = block-based)
+    pub use_btree: bool,
 }
 
 impl ColumnFamilyConfig {
@@ -357,6 +359,13 @@ impl ColumnFamilyConfig {
         self
     }
 
+    /// Enable or disable B+tree format for klog.
+    /// When enabled, uses B+tree structure instead of block-based format.
+    pub fn use_btree(mut self, enable: bool) -> Self {
+        self.use_btree = enable;
+        self
+    }
+
     /// Load configuration from an INI file.
     ///
     /// # Arguments
@@ -451,6 +460,7 @@ impl ColumnFamilyConfig {
             min_disk_space: c_config.min_disk_space,
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
+            use_btree: c_config.use_btree != 0,
         }
     }
 
@@ -480,6 +490,7 @@ impl ColumnFamilyConfig {
             min_disk_space: self.min_disk_space,
             l1_file_count_trigger: self.l1_file_count_trigger,
             l0_queue_stall_threshold: self.l0_queue_stall_threshold,
+            use_btree: if self.use_btree { 1 } else { 0 },
         };
 
         // Copy comparator name
@@ -548,6 +559,7 @@ impl Default for ColumnFamilyConfig {
             min_disk_space: c_config.min_disk_space,
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
+            use_btree: c_config.use_btree != 0,
         }
     }
 }

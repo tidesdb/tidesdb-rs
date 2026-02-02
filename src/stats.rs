@@ -34,6 +34,14 @@ pub struct Stats {
     pub read_amp: f64,
     /// Cache hit rate (0.0 if cache disabled)
     pub hit_rate: f64,
+    /// Whether column family uses B+tree format
+    pub use_btree: bool,
+    /// Total B+tree nodes across all SSTables (only populated if use_btree=true)
+    pub btree_total_nodes: u64,
+    /// Maximum tree height across all SSTables (only populated if use_btree=true)
+    pub btree_max_height: u32,
+    /// Average tree height across all SSTables (only populated if use_btree=true)
+    pub btree_avg_height: f64,
 }
 
 /// Statistics for the block cache.

@@ -566,7 +566,8 @@ mod tests {
             .default_isolation_level(IsolationLevel::ReadCommitted)
             .min_disk_space(1024 * 1024 * 1024)
             .l1_file_count_trigger(4)
-            .l0_queue_stall_threshold(8);
+            .l0_queue_stall_threshold(8)
+            .use_btree(false);
 
         // Verify some values
         assert_eq!(config.write_buffer_size, 64 * 1024 * 1024);
@@ -580,5 +581,110 @@ mod tests {
         assert_eq!(config.min_disk_space, 1024 * 1024 * 1024);
         assert_eq!(config.l1_file_count_trigger, 4);
         assert_eq!(config.l0_queue_stall_threshold, 8);
+        assert_eq!(config.use_btree, false);
+    }
+
+    #[test]
+    fn test_use_btree_config() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Create column family with B+tree format enabled
+        let cf_config = ColumnFamilyConfig::new()
+            .use_btree(true)
+            .compression_algorithm(CompressionAlgorithm::Lz4);
+
+        db.create_column_family("btree_cf", cf_config).unwrap();
+
+        let cf = db.get_column_family("btree_cf").unwrap();
+        assert_eq!(cf.name(), "btree_cf");
+
+        // Insert some data
+        {
+            let txn = db.begin_transaction().unwrap();
+            for i in 0..50 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Verify data can be read back
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"key0000").unwrap();
+            assert_eq!(value, b"value0");
+        }
+    }
+
+    #[test]
+    fn test_btree_stats() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Create column family with B+tree format
+        let cf_config = ColumnFamilyConfig::new()
+            .use_btree(true);
+
+        db.create_column_family("btree_stats_cf", cf_config).unwrap();
+        let cf = db.get_column_family("btree_stats_cf").unwrap();
+
+        // Insert some data
+        {
+            let txn = db.begin_transaction().unwrap();
+            for i in 0..100 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Get stats and verify B+tree fields are accessible
+        let stats = cf.get_stats().unwrap();
+
+        // Verify B+tree stats fields exist and are accessible
+        let _ = stats.use_btree;
+        let _ = stats.btree_total_nodes;
+        let _ = stats.btree_max_height;
+        let _ = stats.btree_avg_height;
+
+        // Basic sanity check
+        assert!(stats.num_levels >= 0);
+    }
+
+    #[test]
+    fn test_block_based_vs_btree_config() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Create block-based column family (default)
+        let block_config = ColumnFamilyConfig::new()
+            .use_btree(false);
+        db.create_column_family("block_cf", block_config).unwrap();
+
+        // Create B+tree column family
+        let btree_config = ColumnFamilyConfig::new()
+            .use_btree(true);
+        db.create_column_family("btree_cf", btree_config).unwrap();
+
+        // Verify both can be used
+        let block_cf = db.get_column_family("block_cf").unwrap();
+        let btree_cf = db.get_column_family("btree_cf").unwrap();
+
+        // Insert data into both
+        {
+            let txn = db.begin_transaction().unwrap();
+            txn.put(&block_cf, b"key1", b"value1", -1).unwrap();
+            txn.put(&btree_cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Read from both
+        {
+            let txn = db.begin_transaction().unwrap();
+            let v1 = txn.get(&block_cf, b"key1").unwrap();
+            let v2 = txn.get(&btree_cf, b"key1").unwrap();
+            assert_eq!(v1, b"value1");
+            assert_eq!(v2, b"value1");
+        }
     }
 }

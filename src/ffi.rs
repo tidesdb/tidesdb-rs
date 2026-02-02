@@ -115,6 +115,7 @@ pub struct tidesdb_column_family_config_t {
     pub min_disk_space: u64,
     pub l1_file_count_trigger: c_int,
     pub l0_queue_stall_threshold: c_int,
+    pub use_btree: c_int,
 }
 
 /// Statistics for a column family
@@ -132,6 +133,10 @@ pub struct tidesdb_stats_t {
     pub level_key_counts: *mut u64,
     pub read_amp: c_double,
     pub hit_rate: c_double,
+    pub use_btree: c_int,
+    pub btree_total_nodes: u64,
+    pub btree_max_height: u32,
+    pub btree_avg_height: c_double,
 }
 
 /// Cache statistics
