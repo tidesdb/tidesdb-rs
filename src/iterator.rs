@@ -23,7 +23,7 @@ use std::ptr;
 /// db.create_column_family("my_cf", ColumnFamilyConfig::default())?;
 /// let cf = db.get_column_family("my_cf")?;
 ///
-/// let txn = db.begin_transaction()?;
+/// let mut txn = db.begin_transaction()?;
 ///
 /// // Insert some data
 /// txn.put(&cf, b"key1", b"value1", -1)?;

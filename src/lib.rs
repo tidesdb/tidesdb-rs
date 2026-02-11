@@ -57,7 +57,7 @@
 //!     let cf = db.get_column_family("my_cf")?;
 //!
 //!     // Write data in a transaction
-//!     let txn = db.begin_transaction()?;
+//!     let mut txn = db.begin_transaction()?;
 //!     txn.put(&cf, b"key1", b"value1", -1)?;
 //!     txn.put(&cf, b"key2", b"value2", -1)?;
 //!     txn.commit()?;
@@ -152,7 +152,7 @@ mod tests {
 
         // Put
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"key", b"value", -1).unwrap();
             txn.commit().unwrap();
         }
@@ -166,7 +166,7 @@ mod tests {
 
         // Delete
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.delete(&cf, b"key").unwrap();
             txn.commit().unwrap();
         }
@@ -195,7 +195,7 @@ mod tests {
             + 2;
 
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"temp_key", b"temp_value", ttl).unwrap();
             txn.commit().unwrap();
         }
@@ -218,7 +218,7 @@ mod tests {
 
         // Multiple operations in one transaction
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"key1", b"value1", -1).unwrap();
             txn.put(&cf, b"key2", b"value2", -1).unwrap();
             txn.put(&cf, b"key3", b"value3", -1).unwrap();
@@ -246,7 +246,7 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"rollback_key", b"rollback_value", -1).unwrap();
             txn.rollback().unwrap();
         }
@@ -268,7 +268,7 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"key1", b"value1", -1).unwrap();
 
             txn.savepoint("sp1").unwrap();
@@ -308,7 +308,7 @@ mod tests {
 
         // Insert some data
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             for i in 0..10 {
                 let key = format!("key{:02}", i);
                 let value = format!("value{}", i);
@@ -385,7 +385,7 @@ mod tests {
 
         // Insert some data
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             for i in 0..100 {
                 let key = format!("key{}", i);
                 let value = format!("value{}", i);
@@ -439,7 +439,7 @@ mod tests {
         // Insert some data
         {
             let cf = db.get_column_family("old_name").unwrap();
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"key", b"value", -1).unwrap();
             txn.commit().unwrap();
         }
@@ -467,7 +467,7 @@ mod tests {
         // Insert some data
         {
             let cf = db.get_column_family("test_cf").unwrap();
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&cf, b"key", b"value", -1).unwrap();
             txn.commit().unwrap();
         }
@@ -521,7 +521,7 @@ mod tests {
 
         // Insert some data
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             for i in 0..100 {
                 let key = format!("key{}", i);
                 let value = format!("value{}", i);
@@ -600,7 +600,7 @@ mod tests {
 
         // Insert some data
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             for i in 0..50 {
                 let key = format!("key{:04}", i);
                 let value = format!("value{}", i);
@@ -630,7 +630,7 @@ mod tests {
 
         // Insert some data
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             for i in 0..100 {
                 let key = format!("key{:04}", i);
                 let value = format!("value{}", i);
@@ -653,6 +653,175 @@ mod tests {
     }
 
     #[test]
+    fn test_clone_column_family() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("source_cf", cf_config).unwrap();
+
+        // Insert data into source
+        {
+            let cf = db.get_column_family("source_cf").unwrap();
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.put(&cf, b"key3", b"value3", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Clone the column family
+        db.clone_column_family("source_cf", "cloned_cf").unwrap();
+
+        // Verify cloned column family exists
+        let cloned_cf = db.get_column_family("cloned_cf").unwrap();
+        assert_eq!(cloned_cf.name(), "cloned_cf");
+
+        // Verify data is present in the clone
+        {
+            let txn = db.begin_transaction().unwrap();
+            let v1 = txn.get(&cloned_cf, b"key1").unwrap();
+            assert_eq!(v1, b"value1");
+            let v2 = txn.get(&cloned_cf, b"key2").unwrap();
+            assert_eq!(v2, b"value2");
+            let v3 = txn.get(&cloned_cf, b"key3").unwrap();
+            assert_eq!(v3, b"value3");
+        }
+
+        // Verify source still exists and is independent
+        let source_cf = db.get_column_family("source_cf").unwrap();
+        {
+            let txn = db.begin_transaction().unwrap();
+            let v1 = txn.get(&source_cf, b"key1").unwrap();
+            assert_eq!(v1, b"value1");
+        }
+
+        // Verify clone is independent -- write to clone, source unaffected
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cloned_cf, b"key4", b"value4", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        {
+            let txn = db.begin_transaction().unwrap();
+            // key4 should exist in clone
+            let v4 = txn.get(&cloned_cf, b"key4").unwrap();
+            assert_eq!(v4, b"value4");
+            // key4 should not exist in source
+            assert!(txn.get(&source_cf, b"key4").is_err());
+        }
+    }
+
+    #[test]
+    fn test_clone_column_family_errors() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("source_cf", cf_config).unwrap();
+
+        // Clone to a name that already exists should fail
+        let cf_config2 = ColumnFamilyConfig::default();
+        db.create_column_family("existing_cf", cf_config2).unwrap();
+        assert!(db.clone_column_family("source_cf", "existing_cf").is_err());
+
+        // Clone from non-existent source should fail
+        assert!(db.clone_column_family("nonexistent_cf", "new_cf").is_err());
+    }
+
+    #[test]
+    fn test_transaction_reset() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Begin transaction, do work, commit, then reset and reuse
+        let mut txn = db.begin_transaction().unwrap();
+
+        // First batch
+        txn.put(&cf, b"key1", b"value1", -1).unwrap();
+        txn.commit().unwrap();
+
+        // Reset with same isolation level
+        txn.reset(IsolationLevel::ReadCommitted).unwrap();
+
+        // Second batch using the same transaction
+        txn.put(&cf, b"key2", b"value2", -1).unwrap();
+        txn.commit().unwrap();
+
+        // Verify both keys exist
+        {
+            let txn = db.begin_transaction().unwrap();
+            let v1 = txn.get(&cf, b"key1").unwrap();
+            assert_eq!(v1, b"value1");
+            let v2 = txn.get(&cf, b"key2").unwrap();
+            assert_eq!(v2, b"value2");
+        }
+    }
+
+    #[test]
+    fn test_transaction_reset_with_different_isolation() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Begin with ReadCommitted
+        let mut txn = db.begin_transaction_with_isolation(IsolationLevel::ReadCommitted).unwrap();
+        txn.put(&cf, b"key1", b"value1", -1).unwrap();
+        txn.commit().unwrap();
+
+        // Reset with different isolation level
+        txn.reset(IsolationLevel::RepeatableRead).unwrap();
+        txn.put(&cf, b"key2", b"value2", -1).unwrap();
+        txn.commit().unwrap();
+
+        // Reset again with yet another level
+        txn.reset(IsolationLevel::Snapshot).unwrap();
+        txn.put(&cf, b"key3", b"value3", -1).unwrap();
+        txn.commit().unwrap();
+
+        // Verify all keys
+        {
+            let txn = db.begin_transaction().unwrap();
+            assert_eq!(txn.get(&cf, b"key1").unwrap(), b"value1");
+            assert_eq!(txn.get(&cf, b"key2").unwrap(), b"value2");
+            assert_eq!(txn.get(&cf, b"key3").unwrap(), b"value3");
+        }
+    }
+
+    #[test]
+    fn test_transaction_reset_after_rollback() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        let mut txn = db.begin_transaction().unwrap();
+
+        // Do work and rollback
+        txn.put(&cf, b"key1", b"value1", -1).unwrap();
+        txn.rollback().unwrap();
+
+        // Reset after rollback should work
+        txn.reset(IsolationLevel::ReadCommitted).unwrap();
+
+        // Do new work and commit
+        txn.put(&cf, b"key2", b"value2", -1).unwrap();
+        txn.commit().unwrap();
+
+        // Verify key1 does not exist (was rolled back), key2 exists
+        {
+            let txn = db.begin_transaction().unwrap();
+            assert!(txn.get(&cf, b"key1").is_err());
+            assert_eq!(txn.get(&cf, b"key2").unwrap(), b"value2");
+        }
+    }
+
+    #[test]
     fn test_block_based_vs_btree_config() {
         let (db, _temp_dir) = create_test_db();
 
@@ -672,7 +841,7 @@ mod tests {
 
         // Insert data into both
         {
-            let txn = db.begin_transaction().unwrap();
+            let mut txn = db.begin_transaction().unwrap();
             txn.put(&block_cf, b"key1", b"value1", -1).unwrap();
             txn.put(&btree_cf, b"key1", b"value1", -1).unwrap();
             txn.commit().unwrap();

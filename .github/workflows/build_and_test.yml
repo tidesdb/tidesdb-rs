@@ -154,6 +154,8 @@ jobs:
       - name: Install Rust toolchain
         if: runner.os != 'Windows'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
 
       - name: Build and test (Linux)
         if: runner.os == 'Linux'

@@ -5,6 +5,7 @@
 
 //! Transaction operations for TidesDB.
 
+use crate::config::IsolationLevel;
 use crate::db::ColumnFamily;
 use crate::error::{check_result, Error, Result};
 use crate::ffi;
@@ -26,7 +27,7 @@ use std::ptr;
 /// db.create_column_family("my_cf", ColumnFamilyConfig::default())?;
 /// let cf = db.get_column_family("my_cf")?;
 ///
-/// let txn = db.begin_transaction()?;
+/// let mut txn = db.begin_transaction()?;
 /// txn.put(&cf, b"key", b"value", -1)?;
 /// txn.commit()?;
 /// # Ok::<(), tidesdb::Error>(())
@@ -147,8 +148,9 @@ impl Transaction {
 
     /// Commits the transaction.
     ///
-    /// After committing, the transaction cannot be used for further operations.
-    pub fn commit(mut self) -> Result<()> {
+    /// After committing, the transaction cannot be used for further operations
+    /// unless `reset` is called.
+    pub fn commit(&mut self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_txn_commit(self.txn) };
         self.committed = true;
         check_result(result, "failed to commit transaction")
@@ -156,11 +158,30 @@ impl Transaction {
 
     /// Rolls back the transaction.
     ///
-    /// After rolling back, the transaction cannot be used for further operations.
-    pub fn rollback(mut self) -> Result<()> {
+    /// After rolling back, the transaction cannot be used for further operations
+    /// unless `reset` is called.
+    pub fn rollback(&mut self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_txn_rollback(self.txn) };
         self.committed = true; // Mark as done to prevent double-free
         check_result(result, "failed to rollback transaction")
+    }
+
+    /// Resets a committed or aborted transaction for reuse with a new isolation level.
+    /// This avoids the overhead of freeing and reallocating transaction resources.
+    ///
+    /// # Arguments
+    ///
+    /// * `isolation` - The new isolation level for the reset transaction
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transaction is still active (not committed/aborted)
+    /// or if the isolation level is invalid.
+    pub fn reset(&mut self, isolation: IsolationLevel) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_txn_reset(self.txn, isolation as i32) };
+        check_result(result, "failed to reset transaction")?;
+        self.committed = false;
+        Ok(())
     }
 
     /// Creates a savepoint within the transaction.

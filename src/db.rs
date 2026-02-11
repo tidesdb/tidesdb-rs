@@ -37,7 +37,7 @@ use std::ptr;
 /// let cf = db.get_column_family("my_cf")?;
 ///
 /// // Begin a transaction
-/// let txn = db.begin_transaction()?;
+/// let mut txn = db.begin_transaction()?;
 /// txn.put(&cf, b"key", b"value", -1)?;
 /// txn.commit()?;
 /// # Ok::<(), tidesdb::Error>(())
@@ -117,6 +117,23 @@ impl TidesDB {
             ffi::tidesdb_rename_column_family(self.db, c_old_name.as_ptr(), c_new_name.as_ptr())
         };
         check_result(result, "failed to rename column family")
+    }
+
+    /// Creates a complete copy of an existing column family with a new name.
+    /// The clone contains all the data from the source at the time of cloning.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_name` - Name of the source column family to clone
+    /// * `dest_name` - Name for the new cloned column family
+    pub fn clone_column_family(&self, source_name: &str, dest_name: &str) -> Result<()> {
+        let c_source_name = CString::new(source_name)?;
+        let c_dest_name = CString::new(dest_name)?;
+
+        let result = unsafe {
+            ffi::tidesdb_clone_column_family(self.db, c_source_name.as_ptr(), c_dest_name.as_ptr())
+        };
+        check_result(result, "failed to clone column family")
     }
 
     /// Retrieves a column family by name.

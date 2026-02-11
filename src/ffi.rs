@@ -152,7 +152,7 @@ pub struct tidesdb_cache_stats_t {
 }
 
 #[link(name = "tidesdb")]
-extern "C" {
+unsafe extern "C" {
     // Database operations
     pub fn tidesdb_open(config: *const tidesdb_config_t, db: *mut *mut tidesdb_t) -> c_int;
     pub fn tidesdb_close(db: *mut tidesdb_t) -> c_int;
@@ -234,6 +234,7 @@ extern "C" {
     pub fn tidesdb_txn_commit(txn: *mut tidesdb_txn_t) -> c_int;
     pub fn tidesdb_txn_rollback(txn: *mut tidesdb_txn_t) -> c_int;
     pub fn tidesdb_txn_free(txn: *mut tidesdb_txn_t);
+    pub fn tidesdb_txn_reset(txn: *mut tidesdb_txn_t, isolation: c_int) -> c_int;
 
     // Savepoints
     pub fn tidesdb_txn_savepoint(txn: *mut tidesdb_txn_t, name: *const c_char) -> c_int;
@@ -277,6 +278,13 @@ extern "C" {
         db: *mut tidesdb_t,
         old_name: *const c_char,
         new_name: *const c_char,
+    ) -> c_int;
+
+    // Column family clone
+    pub fn tidesdb_clone_column_family(
+        db: *mut tidesdb_t,
+        source_name: *const c_char,
+        dest_name: *const c_char,
     ) -> c_int;
 
     // Default config
