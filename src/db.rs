@@ -309,6 +309,20 @@ impl TidesDB {
         let result = unsafe { ffi::tidesdb_backup(self.db, c_dir.as_ptr() as *mut c_char) };
         check_result(result, "failed to backup database")
     }
+
+    /// Creates a lightweight, near-instant snapshot of the database using hard links
+    /// instead of copying SSTable data.
+    ///
+    /// # Arguments
+    ///
+    /// * `checkpoint_dir` - The directory to create the checkpoint in.
+    ///   Must be a non-existent or empty directory.
+    pub fn checkpoint(&self, checkpoint_dir: &str) -> Result<()> {
+        let c_dir = CString::new(checkpoint_dir)?;
+
+        let result = unsafe { ffi::tidesdb_checkpoint(self.db, c_dir.as_ptr()) };
+        check_result(result, "failed to checkpoint database")
+    }
 }
 
 impl Drop for TidesDB {
