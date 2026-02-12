@@ -293,6 +293,9 @@ unsafe extern "C" {
     // Backup
     pub fn tidesdb_backup(db: *mut tidesdb_t, dir: *mut c_char) -> c_int;
 
+    // Checkpoint
+    pub fn tidesdb_checkpoint(db: *mut tidesdb_t, checkpoint_dir: *const c_char) -> c_int;
+
     // Flushing/compacting status
     pub fn tidesdb_is_flushing(cf: *mut tidesdb_column_family_t) -> c_int;
     pub fn tidesdb_is_compacting(cf: *mut tidesdb_column_family_t) -> c_int;

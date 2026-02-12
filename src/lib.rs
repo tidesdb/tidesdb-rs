@@ -481,6 +481,46 @@ mod tests {
     }
 
     #[test]
+    fn test_checkpoint() {
+        let (db, temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+
+        // Insert some data
+        {
+            let cf = db.get_column_family("test_cf").unwrap();
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Create checkpoint directory
+        let checkpoint_dir = temp_dir.path().join("checkpoint");
+        db.checkpoint(checkpoint_dir.to_str().unwrap()).unwrap();
+
+        // Verify checkpoint directory exists
+        assert!(checkpoint_dir.exists());
+
+        // Open the checkpoint as a separate database and verify data
+        let checkpoint_config = Config::new(checkpoint_dir.to_str().unwrap())
+            .num_flush_threads(2)
+            .num_compaction_threads(2)
+            .log_level(LogLevel::Info)
+            .block_cache_size(64 * 1024 * 1024)
+            .max_open_sstables(256);
+
+        let checkpoint_db = TidesDB::open(checkpoint_config).unwrap();
+        let cf = checkpoint_db.get_column_family("test_cf").unwrap();
+        let txn = checkpoint_db.begin_transaction().unwrap();
+        let v1 = txn.get(&cf, b"key1").unwrap();
+        assert_eq!(v1, b"value1");
+        let v2 = txn.get(&cf, b"key2").unwrap();
+        assert_eq!(v2, b"value2");
+    }
+
+    #[test]
     fn test_is_flushing_compacting() {
         let (db, _temp_dir) = create_test_db();
 
