@@ -12,6 +12,8 @@ use libc::{c_char, c_double, c_float, c_int, c_void, size_t, time_t};
 pub const TDB_MAX_COMPARATOR_NAME: usize = 64;
 /// Maximum comparator context string length
 pub const TDB_MAX_COMPARATOR_CTX: usize = 256;
+/// Maximum column family name length
+pub const TDB_MAX_CF_NAME_LEN: usize = 128;
 
 /// Error codes (negative values as per C API)
 pub const TDB_SUCCESS: c_int = 0;
@@ -92,6 +94,7 @@ pub struct tidesdb_config_t {
 /// Column family configuration
 #[repr(C)]
 pub struct tidesdb_column_family_config_t {
+    pub name: [c_char; TDB_MAX_CF_NAME_LEN],
     pub write_buffer_size: size_t,
     pub level_size_ratio: size_t,
     pub min_levels: c_int,

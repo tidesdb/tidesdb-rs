@@ -467,6 +467,7 @@ impl ColumnFamilyConfig {
     /// Convert to C configuration struct.
     pub(crate) fn to_c_config(&self) -> ffi::tidesdb_column_family_config_t {
         let mut config = ffi::tidesdb_column_family_config_t {
+            name: [0; ffi::TDB_MAX_CF_NAME_LEN],
             write_buffer_size: self.write_buffer_size,
             level_size_ratio: self.level_size_ratio,
             min_levels: self.min_levels,
