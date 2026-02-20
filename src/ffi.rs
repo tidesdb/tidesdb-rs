@@ -330,6 +330,16 @@ unsafe extern "C" {
         ctx_out: *mut *mut c_void,
     ) -> c_int;
 
+    // Range cost estimation
+    pub fn tidesdb_range_cost(
+        cf: *mut tidesdb_column_family_t,
+        key_a: *const u8,
+        key_a_size: size_t,
+        key_b: *const u8,
+        key_b_size: size_t,
+        cost: *mut c_double,
+    ) -> c_int;
+
     // Generic free
     pub fn tidesdb_free(ptr: *mut c_void);
 }

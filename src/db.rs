@@ -448,6 +448,40 @@ impl ColumnFamily {
         unsafe { ffi::tidesdb_is_compacting(self.cf) != 0 }
     }
 
+    /// Estimates the computational cost of iterating between two keys in this column family.
+    /// The returned value is an opaque double — meaningful only for comparison with other
+    /// values from the same function. Uses only in-memory metadata and performs no disk I/O.
+    ///
+    /// Key order does not matter — the function normalizes the range so `key_a > key_b`
+    /// produces the same result as `key_b > key_a`.
+    ///
+    /// # Arguments
+    ///
+    /// * `key_a` - First key (bound of range)
+    /// * `key_b` - Second key (bound of range)
+    ///
+    /// # Returns
+    ///
+    /// Estimated traversal cost (higher = more expensive). A cost of 0.0 means no
+    /// overlapping SSTables or memtable entries were found for the range.
+    pub fn range_cost(&self, key_a: &[u8], key_b: &[u8]) -> Result<f64> {
+        let mut cost: f64 = 0.0;
+
+        let result = unsafe {
+            ffi::tidesdb_range_cost(
+                self.cf,
+                key_a.as_ptr(),
+                key_a.len(),
+                key_b.as_ptr(),
+                key_b.len(),
+                &mut cost,
+            )
+        };
+        check_result(result, "failed to estimate range cost")?;
+
+        Ok(cost)
+    }
+
     /// Updates the runtime configuration for this column family.
     ///
     /// # Arguments

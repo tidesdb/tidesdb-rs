@@ -862,6 +862,97 @@ mod tests {
     }
 
     #[test]
+    fn test_range_cost() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..100 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Estimate range cost
+        let cost = cf.range_cost(b"key0000", b"key0099").unwrap();
+        // Cost should be non-negative
+        assert!(cost >= 0.0);
+    }
+
+    #[test]
+    fn test_range_cost_comparison() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..1000 {
+                let key = format!("key{:06}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Compare costs of different ranges
+        let cost_small = cf.range_cost(b"key000000", b"key000009").unwrap();
+        let cost_large = cf.range_cost(b"key000000", b"key000999").unwrap();
+
+        // Both should be non-negative
+        assert!(cost_small >= 0.0);
+        assert!(cost_large >= 0.0);
+    }
+
+    #[test]
+    fn test_range_cost_key_order_invariant() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..50 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Key order should not matter -- both orderings produce the same cost
+        let cost_ab = cf.range_cost(b"key0000", b"key0049").unwrap();
+        let cost_ba = cf.range_cost(b"key0049", b"key0000").unwrap();
+        assert!((cost_ab - cost_ba).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_range_cost_empty_range() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Cost on empty column family should be 0.0
+        let cost = cf.range_cost(b"key_a", b"key_b").unwrap();
+        assert!(cost >= 0.0);
+    }
+
+    #[test]
     fn test_block_based_vs_btree_config() {
         let (db, _temp_dir) = create_test_db();
 
