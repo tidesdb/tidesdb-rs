@@ -10,9 +10,60 @@ use crate::error::{check_result, Error, Result};
 use crate::ffi;
 use crate::stats::CacheStats;
 use crate::transaction::Transaction;
-use libc::c_char;
+use libc::{c_char, c_int, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
+
+/// A single operation from a committed transaction batch.
+///
+/// Passed to commit hook callbacks. Contains owned copies of the key and value data.
+#[derive(Debug, Clone)]
+pub struct CommitOp {
+    /// The key
+    pub key: Vec<u8>,
+    /// The value (`None` for delete operations)
+    pub value: Option<Vec<u8>>,
+    /// TTL (time-to-live) as Unix timestamp, 0 means no expiry
+    pub ttl: i64,
+    /// Whether this is a delete operation
+    pub is_delete: bool,
+}
+
+/// Type alias for the boxed commit hook callback.
+type CommitHookCallback = Box<dyn Fn(&[CommitOp], u64) -> i32 + Send>;
+
+/// Trampoline function that bridges the C callback to the Rust closure.
+unsafe extern "C" fn commit_hook_trampoline(
+    ops: *const ffi::tidesdb_commit_op_t,
+    num_ops: c_int,
+    commit_seq: u64,
+    ctx: *mut c_void,
+) -> c_int {
+    if ctx.is_null() || ops.is_null() || num_ops <= 0 {
+        return -1;
+    }
+
+    let callback = unsafe { &*(ctx as *const CommitHookCallback) };
+
+    let mut rust_ops = Vec::with_capacity(num_ops as usize);
+    for i in 0..num_ops as isize {
+        let op = unsafe { &*ops.offset(i) };
+        let key = unsafe { std::slice::from_raw_parts(op.key, op.key_size) }.to_vec();
+        let value = if op.is_delete != 0 || op.value.is_null() {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(op.value, op.value_size) }.to_vec())
+        };
+        rust_ops.push(CommitOp {
+            key,
+            value,
+            ttl: op.ttl as i64,
+            is_delete: op.is_delete != 0,
+        });
+    }
+
+    callback(&rust_ops, commit_seq)
+}
 
 /// A TidesDB database instance.
 ///
@@ -159,6 +210,7 @@ impl TidesDB {
         Ok(ColumnFamily {
             cf,
             name: name.to_string(),
+            hook_ctx: None,
         })
     }
 
@@ -342,6 +394,8 @@ impl Drop for TidesDB {
 pub struct ColumnFamily {
     pub(crate) cf: *mut ffi::tidesdb_column_family_t,
     name: String,
+    /// Stored commit hook context for cleanup on drop/clear.
+    hook_ctx: Option<*mut CommitHookCallback>,
 }
 
 // ColumnFamily uses internal locking for thread safety
@@ -482,6 +536,67 @@ impl ColumnFamily {
         Ok(cost)
     }
 
+    /// Sets a commit hook callback for this column family.
+    ///
+    /// The hook fires synchronously after every transaction commit on this column family.
+    /// It receives the full batch of committed operations atomically, enabling real-time
+    /// change data capture without WAL parsing.
+    ///
+    /// The hook fires after WAL write, memtable apply, and commit status marking are
+    /// complete — the data is fully durable before the callback runs. Hook failure
+    /// (non-zero return) is logged but does not affect the commit result.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A closure receiving a slice of `CommitOp` and the monotonic
+    ///   commit sequence number. Return 0 on success, non-zero on failure.
+    pub fn set_commit_hook<F>(&mut self, callback: F) -> Result<()>
+    where
+        F: Fn(&[CommitOp], u64) -> i32 + Send + 'static,
+    {
+        // Clear any existing hook first
+        self.clear_commit_hook()?;
+
+        let boxed: Box<CommitHookCallback> = Box::new(Box::new(callback));
+        let raw = Box::into_raw(boxed);
+
+        let result = unsafe {
+            ffi::tidesdb_cf_set_commit_hook(
+                self.cf,
+                Some(commit_hook_trampoline),
+                raw as *mut c_void,
+            )
+        };
+
+        if result != ffi::TDB_SUCCESS {
+            // Reclaim the box if the C call failed
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
+            return Err(Error::from_code(result, "failed to set commit hook"));
+        }
+
+        self.hook_ctx = Some(raw);
+        Ok(())
+    }
+
+    /// Clears the commit hook for this column family.
+    ///
+    /// After clearing, no callback will fire on subsequent commits.
+    pub fn clear_commit_hook(&mut self) -> Result<()> {
+        if let Some(raw) = self.hook_ctx.take() {
+            let result = unsafe {
+                ffi::tidesdb_cf_set_commit_hook(self.cf, None, ptr::null_mut())
+            };
+            // Free the boxed callback regardless of C call result
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
+            check_result(result, "failed to clear commit hook")?;
+        }
+        Ok(())
+    }
+
     /// Updates the runtime configuration for this column family.
     ///
     /// # Arguments
@@ -502,5 +617,18 @@ impl ColumnFamily {
             )
         };
         check_result(result, "failed to update runtime config")
+    }
+}
+
+impl Drop for ColumnFamily {
+    fn drop(&mut self) {
+        // Clear the commit hook to free the boxed callback.
+        // We ignore the result since we're in Drop.
+        if let Some(raw) = self.hook_ctx.take() {
+            unsafe {
+                let _ = ffi::tidesdb_cf_set_commit_hook(self.cf, None, ptr::null_mut());
+                drop(Box::from_raw(raw));
+            }
+        }
     }
 }

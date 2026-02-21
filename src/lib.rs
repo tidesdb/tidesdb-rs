@@ -95,7 +95,7 @@ mod transaction;
 pub use config::{
     ColumnFamilyConfig, CompressionAlgorithm, Config, IsolationLevel, LogLevel, SyncMode,
 };
-pub use db::{ColumnFamily, TidesDB};
+pub use db::{ColumnFamily, CommitOp, TidesDB};
 pub use error::{Error, ErrorCode, Result};
 pub use iterator::Iterator;
 pub use stats::{CacheStats, Stats};
@@ -950,6 +950,246 @@ mod tests {
         // Cost on empty column family should be 0.0
         let cost = cf.range_cost(b"key_a", b"key_b").unwrap();
         assert!(cost >= 0.0);
+    }
+
+    #[test]
+    fn test_commit_hook_basic() {
+        use std::sync::{Arc, Mutex};
+
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let mut cf = db.get_column_family("test_cf").unwrap();
+
+        // Track operations received by the hook
+        let ops_log: Arc<Mutex<Vec<(Vec<u8>, Option<Vec<u8>>, bool)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let ops_log_clone = ops_log.clone();
+
+        // Set commit hook
+        cf.set_commit_hook(move |ops, _commit_seq| {
+            let mut log = ops_log_clone.lock().unwrap();
+            for op in ops {
+                log.push((op.key.clone(), op.value.clone(), op.is_delete));
+            }
+            0
+        })
+        .unwrap();
+
+        // Commit a transaction -- hook should fire
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Verify hook received the operation
+        let log = ops_log.lock().unwrap();
+        assert!(!log.is_empty());
+        assert_eq!(log[0].0, b"key1");
+        assert_eq!(log[0].1, Some(b"value1".to_vec()));
+        assert!(!log[0].2); // not a delete
+    }
+
+    #[test]
+    fn test_commit_hook_delete_operations() {
+        use std::sync::{Arc, Mutex};
+
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let mut cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert data first
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Now set hook and delete
+        let ops_log: Arc<Mutex<Vec<(Vec<u8>, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+        let ops_log_clone = ops_log.clone();
+
+        cf.set_commit_hook(move |ops, _commit_seq| {
+            let mut log = ops_log_clone.lock().unwrap();
+            for op in ops {
+                log.push((op.key.clone(), op.is_delete));
+            }
+            0
+        })
+        .unwrap();
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.delete(&cf, b"key1").unwrap();
+            txn.commit().unwrap();
+        }
+
+        let log = ops_log.lock().unwrap();
+        assert!(!log.is_empty());
+        // Find the delete operation
+        let delete_op = log.iter().find(|(k, _)| k == b"key1");
+        assert!(delete_op.is_some());
+        assert!(delete_op.unwrap().1); // is_delete should be true
+    }
+
+    #[test]
+    fn test_commit_hook_sequence_numbers() {
+        use std::sync::{Arc, Mutex};
+
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let mut cf = db.get_column_family("test_cf").unwrap();
+
+        let seqs: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let seqs_clone = seqs.clone();
+
+        cf.set_commit_hook(move |_ops, commit_seq| {
+            let mut s = seqs_clone.lock().unwrap();
+            s.push(commit_seq);
+            0
+        })
+        .unwrap();
+
+        // Multiple commits
+        for i in 0..3 {
+            let mut txn = db.begin_transaction().unwrap();
+            let key = format!("key{}", i);
+            let value = format!("value{}", i);
+            txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        let seqs = seqs.lock().unwrap();
+        assert_eq!(seqs.len(), 3);
+        // Sequence numbers should be monotonically increasing
+        for i in 1..seqs.len() {
+            assert!(seqs[i] > seqs[i - 1]);
+        }
+    }
+
+    #[test]
+    fn test_commit_hook_clear() {
+        use std::sync::{Arc, Mutex};
+
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let mut cf = db.get_column_family("test_cf").unwrap();
+
+        let count: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+        let count_clone = count.clone();
+
+        cf.set_commit_hook(move |_ops, _commit_seq| {
+            let mut c = count_clone.lock().unwrap();
+            *c += 1;
+            0
+        })
+        .unwrap();
+
+        // First commit -- hook fires
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+        assert_eq!(*count.lock().unwrap(), 1);
+
+        // Clear the hook
+        cf.clear_commit_hook().unwrap();
+
+        // Second commit -- hook should NOT fire
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.commit().unwrap();
+        }
+        assert_eq!(*count.lock().unwrap(), 1); // Still 1, not 2
+    }
+
+    #[test]
+    fn test_commit_hook_replace() {
+        use std::sync::{Arc, Mutex};
+
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let mut cf = db.get_column_family("test_cf").unwrap();
+
+        let hook1_count: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+        let hook2_count: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+
+        // Set first hook
+        let h1 = hook1_count.clone();
+        cf.set_commit_hook(move |_ops, _commit_seq| {
+            *h1.lock().unwrap() += 1;
+            0
+        })
+        .unwrap();
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+        assert_eq!(*hook1_count.lock().unwrap(), 1);
+
+        // Replace with second hook
+        let h2 = hook2_count.clone();
+        cf.set_commit_hook(move |_ops, _commit_seq| {
+            *h2.lock().unwrap() += 1;
+            0
+        })
+        .unwrap();
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // First hook should still be 1, second hook should be 1
+        assert_eq!(*hook1_count.lock().unwrap(), 1);
+        assert_eq!(*hook2_count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_commit_hook_multi_op_transaction() {
+        use std::sync::{Arc, Mutex};
+
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let mut cf = db.get_column_family("test_cf").unwrap();
+
+        let ops_count: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+        let ops_count_clone = ops_count.clone();
+
+        cf.set_commit_hook(move |ops, _commit_seq| {
+            *ops_count_clone.lock().unwrap() += ops.len();
+            0
+        })
+        .unwrap();
+
+        // Commit transaction with multiple operations
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.put(&cf, b"key3", b"value3", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Hook should have received all 3 operations
+        assert_eq!(*ops_count.lock().unwrap(), 3);
     }
 
     #[test]
