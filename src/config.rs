@@ -492,6 +492,8 @@ impl ColumnFamilyConfig {
             l1_file_count_trigger: self.l1_file_count_trigger,
             l0_queue_stall_threshold: self.l0_queue_stall_threshold,
             use_btree: if self.use_btree { 1 } else { 0 },
+            commit_hook_fn: None,
+            commit_hook_ctx: std::ptr::null_mut(),
         };
 
         // Copy comparator name

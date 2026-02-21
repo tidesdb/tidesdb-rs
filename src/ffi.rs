@@ -91,6 +91,28 @@ pub struct tidesdb_config_t {
     pub log_truncation_at: size_t,
 }
 
+/// Commit operation passed to commit hook callback
+#[repr(C)]
+pub struct tidesdb_commit_op_t {
+    pub key: *const u8,
+    pub key_size: size_t,
+    pub value: *const u8,
+    pub value_size: size_t,
+    pub ttl: time_t,
+    pub is_delete: c_int,
+}
+
+/// Commit hook callback function type
+#[allow(non_camel_case_types)]
+pub type tidesdb_commit_hook_fn = Option<
+    unsafe extern "C" fn(
+        ops: *const tidesdb_commit_op_t,
+        num_ops: c_int,
+        commit_seq: u64,
+        ctx: *mut c_void,
+    ) -> c_int,
+>;
+
 /// Column family configuration
 #[repr(C)]
 pub struct tidesdb_column_family_config_t {
@@ -119,6 +141,8 @@ pub struct tidesdb_column_family_config_t {
     pub l1_file_count_trigger: c_int,
     pub l0_queue_stall_threshold: c_int,
     pub use_btree: c_int,
+    pub commit_hook_fn: tidesdb_commit_hook_fn,
+    pub commit_hook_ctx: *mut c_void,
 }
 
 /// Statistics for a column family
@@ -328,6 +352,13 @@ unsafe extern "C" {
         name: *const c_char,
         fn_out: *mut *const c_void,
         ctx_out: *mut *mut c_void,
+    ) -> c_int;
+
+    // Commit hook
+    pub fn tidesdb_cf_set_commit_hook(
+        cf: *mut tidesdb_column_family_t,
+        hook_fn: tidesdb_commit_hook_fn,
+        ctx: *mut c_void,
     ) -> c_int;
 
     // Range cost estimation
