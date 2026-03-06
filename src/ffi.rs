@@ -78,6 +78,29 @@ pub struct tidesdb_iter_t {
     _private: [u8; 0],
 }
 
+/// Custom allocator function types
+#[allow(non_camel_case_types)]
+pub type tidesdb_malloc_fn = Option<unsafe extern "C" fn(size: size_t) -> *mut c_void>;
+#[allow(non_camel_case_types)]
+pub type tidesdb_calloc_fn = Option<unsafe extern "C" fn(nmemb: size_t, size: size_t) -> *mut c_void>;
+#[allow(non_camel_case_types)]
+pub type tidesdb_realloc_fn = Option<unsafe extern "C" fn(ptr: *mut c_void, size: size_t) -> *mut c_void>;
+#[allow(non_camel_case_types)]
+pub type tidesdb_free_fn = Option<unsafe extern "C" fn(ptr: *mut c_void)>;
+
+/// Comparator function type
+#[allow(non_camel_case_types)]
+pub type tidesdb_comparator_fn = Option<
+    unsafe extern "C" fn(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int,
+>;
+
+
 /// Database configuration
 #[repr(C)]
 pub struct tidesdb_config_t {
@@ -89,6 +112,7 @@ pub struct tidesdb_config_t {
     pub max_open_sstables: size_t,
     pub log_to_file: c_int,
     pub log_truncation_at: size_t,
+    pub max_memory_usage: size_t,
 }
 
 /// Commit operation passed to commit hook callback
@@ -180,6 +204,15 @@ pub struct tidesdb_cache_stats_t {
 
 #[link(name = "tidesdb")]
 unsafe extern "C" {
+    // Initialization / custom allocator
+    pub fn tidesdb_init(
+        malloc_fn: tidesdb_malloc_fn,
+        calloc_fn: tidesdb_calloc_fn,
+        realloc_fn: tidesdb_realloc_fn,
+        free_fn: tidesdb_free_fn,
+    ) -> c_int;
+    pub fn tidesdb_finalize();
+
     // Database operations
     pub fn tidesdb_open(config: *const tidesdb_config_t, db: *mut *mut tidesdb_t) -> c_int;
     pub fn tidesdb_close(db: *mut tidesdb_t) -> c_int;
@@ -191,6 +224,10 @@ unsafe extern "C" {
         config: *const tidesdb_column_family_config_t,
     ) -> c_int;
     pub fn tidesdb_drop_column_family(db: *mut tidesdb_t, name: *const c_char) -> c_int;
+    pub fn tidesdb_delete_column_family(
+        db: *mut tidesdb_t,
+        cf: *mut tidesdb_column_family_t,
+    ) -> c_int;
     pub fn tidesdb_get_column_family(
         db: *mut tidesdb_t,
         name: *const c_char,
@@ -223,9 +260,9 @@ unsafe extern "C" {
     pub fn tidesdb_register_comparator(
         db: *mut tidesdb_t,
         name: *const c_char,
-        compare_fn: *const c_void,
+        compare_fn: tidesdb_comparator_fn,
         ctx_str: *const c_char,
-        destroy_fn: *const c_void,
+        ctx: *mut c_void,
     ) -> c_int;
 
     // Transaction operations
@@ -350,7 +387,7 @@ unsafe extern "C" {
     pub fn tidesdb_get_comparator(
         db: *mut tidesdb_t,
         name: *const c_char,
-        fn_out: *mut *const c_void,
+        fn_out: *mut tidesdb_comparator_fn,
         ctx_out: *mut *mut c_void,
     ) -> c_int;
 

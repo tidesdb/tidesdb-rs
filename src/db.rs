@@ -10,7 +10,7 @@ use crate::error::{check_result, Error, Result};
 use crate::ffi;
 use crate::stats::CacheStats;
 use crate::transaction::Transaction;
-use libc::{c_char, c_int, c_void};
+use libc::{c_char, c_int, c_void, size_t};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -31,6 +31,104 @@ pub struct CommitOp {
 
 /// Type alias for the boxed commit hook callback.
 type CommitHookCallback = Box<dyn Fn(&[CommitOp], u64) -> i32 + Send>;
+
+/// Type alias for the boxed comparator callback.
+type ComparatorCallback = Box<dyn Fn(&[u8], &[u8]) -> i32 + Send + Sync>;
+
+/// Trampoline function that bridges the C comparator callback to the Rust closure.
+unsafe extern "C" fn comparator_trampoline(
+    key1: *const u8,
+    key1_size: size_t,
+    key2: *const u8,
+    key2_size: size_t,
+    ctx: *mut c_void,
+) -> c_int {
+    if ctx.is_null() {
+        return 0;
+    }
+
+    let callback = unsafe { &*(ctx as *const ComparatorCallback) };
+
+    let k1 = if key1.is_null() || key1_size == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(key1, key1_size) }
+    };
+    let k2 = if key2.is_null() || key2_size == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(key2, key2_size) }
+    };
+
+    callback(k1, k2)
+}
+
+
+/// Initializes TidesDB with the system allocator.
+///
+/// This must be called exactly once before any other TidesDB function
+/// when using the explicit initialization path. If not called, TidesDB
+/// will auto-initialize with the system allocator on the first `TidesDB::open()`.
+///
+/// # Returns
+///
+/// `Ok(())` on success, or an error if already initialized.
+pub fn init() -> Result<()> {
+    let result = unsafe { ffi::tidesdb_init(None, None, None, None) };
+    check_result(result, "failed to initialize TidesDB")
+}
+
+/// Initializes TidesDB with custom C-level memory allocator functions.
+///
+/// This is an advanced function for integrating with custom memory managers
+/// (e.g., jemalloc, mimalloc, Redis module allocator). Must be called exactly
+/// once before any other TidesDB function.
+///
+/// # Safety
+///
+/// The caller must ensure that the provided function pointers are valid C allocator
+/// functions with correct signatures and semantics (malloc/calloc/realloc/free).
+///
+/// # Arguments
+///
+/// * `malloc_fn` - Custom malloc function
+/// * `calloc_fn` - Custom calloc function
+/// * `realloc_fn` - Custom realloc function
+/// * `free_fn` - Custom free function
+pub unsafe fn init_with_allocator(
+    malloc_fn: ffi::tidesdb_malloc_fn,
+    calloc_fn: ffi::tidesdb_calloc_fn,
+    realloc_fn: ffi::tidesdb_realloc_fn,
+    free_fn: ffi::tidesdb_free_fn,
+) -> Result<()> {
+    let result = unsafe { ffi::tidesdb_init(malloc_fn, calloc_fn, realloc_fn, free_fn) };
+    check_result(result, "failed to initialize TidesDB with custom allocator")
+}
+
+/// Finalizes TidesDB and resets the allocator.
+///
+/// Should be called after all TidesDB operations are complete (all databases closed).
+/// After calling this, `init()` or `init_with_allocator()` can be called again.
+pub fn finalize() {
+    unsafe {
+        ffi::tidesdb_finalize();
+    }
+}
+
+/// Frees memory allocated by TidesDB.
+///
+/// This is primarily useful for FFI scenarios where memory allocated by TidesDB
+/// needs to be freed using the same allocator. For normal Rust usage, the safe
+/// wrappers handle memory management automatically.
+///
+/// # Safety
+///
+/// The pointer must have been allocated by TidesDB.
+pub unsafe fn free(ptr: *mut c_void) {
+    unsafe {
+        ffi::tidesdb_free(ptr);
+    }
+}
 
 /// Trampoline function that bridges the C callback to the Rust closure.
 unsafe extern "C" fn commit_hook_trampoline(
@@ -151,6 +249,21 @@ impl TidesDB {
 
         let result = unsafe { ffi::tidesdb_drop_column_family(self.db, c_name.as_ptr()) };
         check_result(result, "failed to drop column family")
+    }
+
+    /// Deletes a column family by pointer, skipping the name lookup.
+    ///
+    /// This is faster than `drop_column_family` when you already hold a `ColumnFamily`.
+    /// The `ColumnFamily` is consumed and should not be used after this call.
+    ///
+    /// # Arguments
+    ///
+    /// * `cf` - The column family to delete
+    pub fn delete_column_family(&self, cf: ColumnFamily) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_delete_column_family(self.db, cf.cf) };
+        // Prevent ColumnFamily's Drop from trying to clear commit hook on a deleted CF
+        std::mem::forget(cf);
+        check_result(result, "failed to delete column family")
     }
 
     /// Atomically renames a column family and its underlying directory.
@@ -325,29 +438,97 @@ impl TidesDB {
 
     /// Registers a custom comparator with the database.
     ///
+    /// The comparator function determines the sort order of keys throughout the entire
+    /// system: memtables, SSTables, block indexes, and iterators. Once a comparator
+    /// is set for a column family, it **cannot be changed** without corrupting data.
+    ///
     /// # Arguments
     ///
-    /// * `name` - The comparator name
-    /// * `context` - Optional context string
-    pub fn register_comparator(&self, name: &str, context: Option<&str>) -> Result<()> {
+    /// * `name` - The comparator name (used in `ColumnFamilyConfig::comparator_name`)
+    /// * `compare_fn` - A comparison function that returns <0 if key1 < key2,
+    ///   0 if equal, >0 if key1 > key2
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use tidesdb::{TidesDB, Config};
+    ///
+    /// let db = TidesDB::open(Config::new("./mydb"))?;
+    ///
+    /// db.register_comparator("reverse", |key1, key2| {
+    ///     // Reverse byte comparison
+    ///     let min_len = key1.len().min(key2.len());
+    ///     for i in 0..min_len {
+    ///         if key1[i] != key2[i] {
+    ///             return key2[i] as i32 - key1[i] as i32;
+    ///         }
+    ///     }
+    ///     key2.len() as i32 - key1.len() as i32
+    /// })?;
+    /// # Ok::<(), tidesdb::Error>(())
+    /// ```
+    pub fn register_comparator<F>(&self, name: &str, compare_fn: F) -> Result<()>
+    where
+        F: Fn(&[u8], &[u8]) -> i32 + Send + Sync + 'static,
+    {
         let c_name = CString::new(name)?;
-        let c_context = context.map(|s| CString::new(s)).transpose()?;
 
-        let ctx_ptr = c_context
-            .as_ref()
-            .map(|s| s.as_ptr())
-            .unwrap_or(ptr::null());
+        let boxed: Box<ComparatorCallback> = Box::new(Box::new(compare_fn));
+        let raw = Box::into_raw(boxed);
 
         let result = unsafe {
             ffi::tidesdb_register_comparator(
                 self.db,
                 c_name.as_ptr(),
-                ptr::null(),
-                ctx_ptr,
-                ptr::null(),
+                Some(comparator_trampoline),
+                std::ptr::null(), // ctx_str
+                raw as *mut c_void,
             )
         };
-        check_result(result, "failed to register comparator")
+
+        if result != ffi::TDB_SUCCESS {
+            // Reclaim the box if the C call failed
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
+            return Err(Error::from_code(result, "failed to register comparator"));
+        }
+
+        // The context is now owned by the C library for the lifetime of the database.
+        // It will be leaked intentionally — the C API has no destroy callback for comparators.
+        // The memory is freed when the process exits.
+
+        Ok(())
+    }
+
+    /// Checks if a comparator is registered with the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The comparator name to look up
+    ///
+    /// # Returns
+    ///
+    /// `true` if the comparator is registered, `false` otherwise.
+    pub fn has_comparator(&self, name: &str) -> bool {
+        let c_name = match CString::new(name) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        let mut fn_out: ffi::tidesdb_comparator_fn = None;
+        let mut ctx_out: *mut c_void = ptr::null_mut();
+
+        let result = unsafe {
+            ffi::tidesdb_get_comparator(
+                self.db,
+                c_name.as_ptr(),
+                &mut fn_out,
+                &mut ctx_out,
+            )
+        };
+
+        result == ffi::TDB_SUCCESS
     }
 
     /// Creates a backup of the database to the specified directory.

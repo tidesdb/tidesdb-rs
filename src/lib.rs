@@ -95,7 +95,10 @@ mod transaction;
 pub use config::{
     ColumnFamilyConfig, CompressionAlgorithm, Config, IsolationLevel, LogLevel, SyncMode,
 };
-pub use db::{ColumnFamily, CommitOp, TidesDB};
+pub use db::{finalize, free, init, init_with_allocator, ColumnFamily, CommitOp, TidesDB};
+pub use ffi::{
+    tidesdb_calloc_fn, tidesdb_free_fn, tidesdb_malloc_fn, tidesdb_realloc_fn,
+};
 pub use error::{Error, ErrorCode, Result};
 pub use iterator::Iterator;
 pub use stats::{CacheStats, Stats};
@@ -1190,6 +1193,115 @@ mod tests {
 
         // Hook should have received all 3 operations
         assert_eq!(*ops_count.lock().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_init_finalize() {
+        // init() may fail if already auto-initialized by another test,
+        // but finalize() should always be safe to call
+        let _ = init();
+        finalize();
+    }
+
+    #[test]
+    fn test_max_memory_usage_config() {
+        let config = Config::new("./test_mem")
+            .max_memory_usage(512 * 1024 * 1024); // 512MB
+        assert_eq!(config.max_memory_usage, 512 * 1024 * 1024);
+
+        // Default should be 0 (auto)
+        let default_config = Config::default();
+        assert_eq!(default_config.max_memory_usage, 0);
+    }
+
+    #[test]
+    fn test_delete_column_family() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("to_delete", cf_config).unwrap();
+
+        // Insert some data
+        {
+            let cf = db.get_column_family("to_delete").unwrap();
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key", b"value", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Get the column family and delete by pointer
+        let cf = db.get_column_family("to_delete").unwrap();
+        db.delete_column_family(cf).unwrap();
+
+        // Verify it's gone
+        assert!(db.get_column_family("to_delete").is_err());
+    }
+
+    #[test]
+    fn test_register_custom_comparator() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Register a reverse comparator
+        db.register_comparator("test_reverse", |key1, key2| {
+            let min_len = key1.len().min(key2.len());
+            for i in 0..min_len {
+                if key1[i] != key2[i] {
+                    return key2[i] as i32 - key1[i] as i32;
+                }
+            }
+            key2.len() as i32 - key1.len() as i32
+        })
+        .unwrap();
+
+        // Verify it's registered
+        assert!(db.has_comparator("test_reverse"));
+
+        // Create a column family using this comparator
+        let cf_config = ColumnFamilyConfig::new()
+            .comparator_name("test_reverse");
+        db.create_column_family("reverse_cf", cf_config).unwrap();
+
+        let cf = db.get_column_family("reverse_cf").unwrap();
+
+        // Insert data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"aaa", b"first", -1).unwrap();
+            txn.put(&cf, b"zzz", b"last", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // With reverse comparator, iterating forward should give zzz before aaa
+        {
+            let txn = db.begin_transaction().unwrap();
+            let mut iter = txn.new_iterator(&cf).unwrap();
+            iter.seek_to_first().unwrap();
+
+            assert!(iter.is_valid());
+            let first_key = iter.key().unwrap();
+            assert_eq!(first_key, b"zzz");
+
+            iter.next().unwrap();
+            assert!(iter.is_valid());
+            let second_key = iter.key().unwrap();
+            assert_eq!(second_key, b"aaa");
+        }
+    }
+
+    #[test]
+    fn test_has_comparator_builtin() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Built-in comparators should be registered
+        assert!(db.has_comparator("memcmp"));
+        assert!(db.has_comparator("reverse"));
+        assert!(db.has_comparator("lexicographic"));
+        assert!(db.has_comparator("uint64"));
+        assert!(db.has_comparator("int64"));
+        assert!(db.has_comparator("case_insensitive"));
+
+        // Non-existent comparator
+        assert!(!db.has_comparator("nonexistent_comparator"));
     }
 
     #[test]

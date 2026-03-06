@@ -91,6 +91,8 @@ pub struct Config {
     pub block_cache_size: usize,
     /// Maximum number of open SSTable files
     pub max_open_sstables: usize,
+    /// Global memory limit in bytes (0 = auto, 50% of system RAM; minimum: 5% of system RAM)
+    pub max_memory_usage: usize,
     /// Write logs to file instead of stderr
     pub log_to_file: bool,
     /// Log file truncation threshold in bytes (0 = no truncation)
@@ -107,6 +109,7 @@ impl Config {
             log_level: LogLevel::Info,
             block_cache_size: 64 * 1024 * 1024, // 64MB
             max_open_sstables: 256,
+            max_memory_usage: 0, // auto (50% of system RAM)
             log_to_file: false,
             log_truncation_at: 24 * 1024 * 1024, // 24MB
         }
@@ -142,6 +145,13 @@ impl Config {
         self
     }
 
+    /// Set the global memory limit in bytes.
+    /// 0 = auto (50% of system RAM). Minimum: 5% of system RAM.
+    pub fn max_memory_usage(mut self, size: usize) -> Self {
+        self.max_memory_usage = size;
+        self
+    }
+
     /// Enable writing logs to a file instead of stderr.
     pub fn log_to_file(mut self, enable: bool) -> Self {
         self.log_to_file = enable;
@@ -166,6 +176,7 @@ impl Config {
             max_open_sstables: self.max_open_sstables,
             log_to_file: if self.log_to_file { 1 } else { 0 },
             log_truncation_at: self.log_truncation_at,
+            max_memory_usage: self.max_memory_usage,
         };
         Ok((config, c_path))
     }
@@ -180,6 +191,7 @@ impl Default for Config {
             log_level: LogLevel::Info,
             block_cache_size: 64 * 1024 * 1024,
             max_open_sstables: 256,
+            max_memory_usage: 0,
             log_to_file: false,
             log_truncation_at: 24 * 1024 * 1024,
         }
