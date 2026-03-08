@@ -122,7 +122,7 @@ impl Transaction {
         let value = unsafe {
             let slice = std::slice::from_raw_parts(value_ptr, value_len);
             let vec = slice.to_vec();
-            libc::free(value_ptr as *mut libc::c_void);
+            ffi::tidesdb_free(value_ptr as *mut std::ffi::c_void);
             vec
         };
 

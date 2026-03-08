@@ -352,10 +352,10 @@ impl TidesDB {
                 if !name_ptr.is_null() {
                     let name = CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
                     result_names.push(name);
-                    libc::free(name_ptr as *mut libc::c_void);
+                    ffi::tidesdb_free(name_ptr as *mut c_void);
                 }
             }
-            libc::free(names as *mut libc::c_void);
+            ffi::tidesdb_free(names as *mut c_void);
         }
 
         Ok(result_names)
