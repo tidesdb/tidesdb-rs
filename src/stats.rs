@@ -44,6 +44,41 @@ pub struct Stats {
     pub btree_avg_height: f64,
 }
 
+/// Database-level aggregate statistics.
+#[derive(Debug, Clone)]
+pub struct DbStats {
+    /// Number of column families
+    pub num_column_families: i32,
+    /// System total memory
+    pub total_memory: u64,
+    /// System available memory at open time
+    pub available_memory: u64,
+    /// Resolved memory limit (auto or configured)
+    pub resolved_memory_limit: usize,
+    /// Current memory pressure (0=normal, 1=elevated, 2=high, 3=critical)
+    pub memory_pressure_level: i32,
+    /// Number of pending flush operations (queued + in-flight)
+    pub flush_pending_count: i32,
+    /// Total bytes in active memtables across all CFs
+    pub total_memtable_bytes: i64,
+    /// Total immutable memtables across all CFs
+    pub total_immutable_count: i32,
+    /// Total SSTables across all CFs and levels
+    pub total_sstable_count: i32,
+    /// Total data size (klog + vlog) across all CFs
+    pub total_data_size_bytes: u64,
+    /// Number of currently open SSTable file handles
+    pub num_open_sstables: i32,
+    /// Current global sequence number
+    pub global_seq: u64,
+    /// Bytes held by in-flight transactions
+    pub txn_memory_bytes: i64,
+    /// Number of pending compaction tasks
+    pub compaction_queue_size: usize,
+    /// Number of pending flush tasks in queue
+    pub flush_queue_size: usize,
+}
+
 /// Statistics for the block cache.
 #[derive(Debug, Clone)]
 pub struct CacheStats {

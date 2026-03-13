@@ -101,7 +101,7 @@ pub use ffi::{
 };
 pub use error::{Error, ErrorCode, Result};
 pub use iterator::Iterator;
-pub use stats::{CacheStats, Stats};
+pub use stats::{CacheStats, DbStats, Stats};
 pub use transaction::Transaction;
 
 #[cfg(test)]
@@ -1338,5 +1338,180 @@ mod tests {
             assert_eq!(v1, b"value1");
             assert_eq!(v2, b"value1");
         }
+    }
+
+    #[test]
+    fn test_purge_cf() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..50 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Purge the column family (synchronous flush + compaction)
+        cf.purge().unwrap();
+
+        // Verify data is still accessible after purge
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"key0000").unwrap();
+            assert_eq!(value, b"value0");
+            let value = txn.get(&cf, b"key0049").unwrap();
+            assert_eq!(value, b"value49");
+        }
+    }
+
+    #[test]
+    fn test_purge_db() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Create multiple column families with data
+        for cf_name in &["cf_a", "cf_b"] {
+            let cf_config = ColumnFamilyConfig::default();
+            db.create_column_family(cf_name, cf_config).unwrap();
+            let cf = db.get_column_family(cf_name).unwrap();
+
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..20 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Purge entire database
+        db.purge().unwrap();
+
+        // Verify data is still accessible after purge
+        for cf_name in &["cf_a", "cf_b"] {
+            let cf = db.get_column_family(cf_name).unwrap();
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"key0000").unwrap();
+            assert_eq!(value, b"value0");
+        }
+    }
+
+    #[test]
+    fn test_sync_wal() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::new()
+            .sync_mode(SyncMode::None);
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.put(&cf, b"key2", b"value2", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Force WAL sync
+        cf.sync_wal().unwrap();
+
+        // Verify data is still accessible
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"key1").unwrap();
+            assert_eq!(value, b"value1");
+        }
+    }
+
+    #[test]
+    fn test_sync_wal_interval_mode() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::new()
+            .sync_mode(SyncMode::Interval)
+            .sync_interval_us(1000000);
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert data and sync WAL
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Force immediate WAL durability
+        cf.sync_wal().unwrap();
+    }
+
+    #[test]
+    fn test_get_db_stats() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..100 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        let stats = db.get_db_stats().unwrap();
+
+        // Should have at least 1 column family
+        assert!(stats.num_column_families >= 1);
+        // Total memory should be non-zero
+        assert!(stats.total_memory > 0);
+        // Memory pressure should be in valid range (0-3)
+        assert!(stats.memory_pressure_level >= 0 && stats.memory_pressure_level <= 3);
+    }
+
+    #[test]
+    fn test_get_db_stats_multiple_cfs() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Create multiple column families
+        for cf_name in &["cf_1", "cf_2", "cf_3"] {
+            let cf_config = ColumnFamilyConfig::default();
+            db.create_column_family(cf_name, cf_config).unwrap();
+        }
+
+        let stats = db.get_db_stats().unwrap();
+        assert!(stats.num_column_families >= 3);
+    }
+
+    #[test]
+    fn test_purge_cf_empty() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Purge empty column family should succeed
+        cf.purge().unwrap();
+    }
+
+    #[test]
+    fn test_purge_db_empty() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Purge database with no column families should succeed
+        db.purge().unwrap();
     }
 }
