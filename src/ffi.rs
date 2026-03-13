@@ -190,6 +190,26 @@ pub struct tidesdb_stats_t {
     pub btree_avg_height: c_double,
 }
 
+/// Database-level aggregate statistics
+#[repr(C)]
+pub struct tidesdb_db_stats_t {
+    pub num_column_families: c_int,
+    pub total_memory: u64,
+    pub available_memory: u64,
+    pub resolved_memory_limit: size_t,
+    pub memory_pressure_level: c_int,
+    pub flush_pending_count: c_int,
+    pub total_memtable_bytes: i64,
+    pub total_immutable_count: c_int,
+    pub total_sstable_count: c_int,
+    pub total_data_size_bytes: u64,
+    pub num_open_sstables: c_int,
+    pub global_seq: u64,
+    pub txn_memory_bytes: i64,
+    pub compaction_queue_size: size_t,
+    pub flush_queue_size: size_t,
+}
+
 /// Cache statistics
 #[repr(C)]
 pub struct tidesdb_cache_stats_t {
@@ -406,6 +426,19 @@ unsafe extern "C" {
         key_b: *const u8,
         key_b_size: size_t,
         cost: *mut c_double,
+    ) -> c_int;
+
+    // Purge operations
+    pub fn tidesdb_purge_cf(cf: *mut tidesdb_column_family_t) -> c_int;
+    pub fn tidesdb_purge(db: *mut tidesdb_t) -> c_int;
+
+    // WAL sync
+    pub fn tidesdb_sync_wal(cf: *mut tidesdb_column_family_t) -> c_int;
+
+    // Database-level statistics
+    pub fn tidesdb_get_db_stats(
+        db: *mut tidesdb_t,
+        stats: *mut tidesdb_db_stats_t,
     ) -> c_int;
 
     // Generic free

@@ -8,7 +8,7 @@
 use crate::config::{ColumnFamilyConfig, Config, IsolationLevel};
 use crate::error::{check_result, Error, Result};
 use crate::ffi;
-use crate::stats::CacheStats;
+use crate::stats::{CacheStats, DbStats};
 use crate::transaction::Transaction;
 use libc::{c_char, c_int, c_void, size_t};
 use std::ffi::{CStr, CString};
@@ -556,6 +556,47 @@ impl TidesDB {
         let result = unsafe { ffi::tidesdb_checkpoint(self.db, c_dir.as_ptr()) };
         check_result(result, "failed to checkpoint database")
     }
+
+    /// Forces a synchronous flush and aggressive compaction for **all** column families,
+    /// then drains both the global flush and compaction queues.
+    ///
+    /// This is a blocking operation — it will not return until all flush and compaction
+    /// work is complete.
+    pub fn purge(&self) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_purge(self.db) };
+        check_result(result, "failed to purge database")
+    }
+
+    /// Retrieves aggregate statistics across the entire database instance.
+    ///
+    /// Unlike `ColumnFamily::get_stats` (which heap-allocates), this fills a
+    /// caller-provided struct on the stack. No free is needed.
+    pub fn get_db_stats(&self) -> Result<DbStats> {
+        let mut c_stats = std::mem::MaybeUninit::<ffi::tidesdb_db_stats_t>::zeroed();
+
+        let result = unsafe { ffi::tidesdb_get_db_stats(self.db, c_stats.as_mut_ptr()) };
+        check_result(result, "failed to get database stats")?;
+
+        let c_stats = unsafe { c_stats.assume_init() };
+
+        Ok(DbStats {
+            num_column_families: c_stats.num_column_families,
+            total_memory: c_stats.total_memory,
+            available_memory: c_stats.available_memory,
+            resolved_memory_limit: c_stats.resolved_memory_limit,
+            memory_pressure_level: c_stats.memory_pressure_level,
+            flush_pending_count: c_stats.flush_pending_count,
+            total_memtable_bytes: c_stats.total_memtable_bytes,
+            total_immutable_count: c_stats.total_immutable_count,
+            total_sstable_count: c_stats.total_sstable_count,
+            total_data_size_bytes: c_stats.total_data_size_bytes,
+            num_open_sstables: c_stats.num_open_sstables,
+            global_seq: c_stats.global_seq,
+            txn_memory_bytes: c_stats.txn_memory_bytes,
+            compaction_queue_size: c_stats.compaction_queue_size,
+            flush_queue_size: c_stats.flush_queue_size,
+        })
+    }
 }
 
 impl Drop for TidesDB {
@@ -681,6 +722,38 @@ impl ColumnFamily {
     /// Checks if this column family has a compaction operation in progress.
     pub fn is_compacting(&self) -> bool {
         unsafe { ffi::tidesdb_is_compacting(self.cf) != 0 }
+    }
+
+    /// Forces a synchronous flush and aggressive compaction for this column family.
+    ///
+    /// Unlike `flush_memtable` and `compact` (which are non-blocking), purge blocks
+    /// until all flush and compaction I/O is complete.
+    ///
+    /// **Behavior:**
+    /// 1. Waits for any in-progress flush to complete
+    /// 2. Force-flushes the active memtable (even if below threshold)
+    /// 3. Waits for flush I/O to fully complete
+    /// 4. Waits for any in-progress compaction to complete
+    /// 5. Triggers synchronous compaction inline (bypasses the compaction queue)
+    /// 6. Waits for any queued compaction to drain
+    pub fn purge(&self) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_purge_cf(self.cf) };
+        check_result(result, "failed to purge column family")
+    }
+
+    /// Forces an immediate fsync of the active write-ahead log for this column family.
+    ///
+    /// This is useful for explicit durability control when using `SyncMode::None` or
+    /// `SyncMode::Interval`.
+    ///
+    /// **When to use:**
+    /// - Application-controlled durability after a batch of related writes
+    /// - Pre-checkpoint to ensure all buffered WAL data is on disk
+    /// - Graceful shutdown to flush WAL buffers before closing
+    /// - Critical writes that need durability without `SyncMode::Full` for all writes
+    pub fn sync_wal(&self) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_sync_wal(self.cf) };
+        check_result(result, "failed to sync WAL")
     }
 
     /// Estimates the computational cost of iterating between two keys in this column family.
