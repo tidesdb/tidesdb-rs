@@ -29,6 +29,7 @@ pub const TDB_ERR_MEMORY_LIMIT: c_int = -9;
 pub const TDB_ERR_INVALID_DB: c_int = -10;
 pub const TDB_ERR_UNKNOWN: c_int = -11;
 pub const TDB_ERR_LOCKED: c_int = -12;
+pub const TDB_ERR_READONLY: c_int = -13;
 
 /// Compression algorithms (values from C API documentation)
 pub const NO_COMPRESSION: c_int = 0;
@@ -78,6 +79,32 @@ pub struct tidesdb_iter_t {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+pub struct tidesdb_objstore_t {
+    _private: [u8; 0],
+}
+
+/// Object store behavior configuration
+#[repr(C)]
+pub struct tidesdb_objstore_config_t {
+    pub local_cache_path: *const c_char,
+    pub local_cache_max_bytes: size_t,
+    pub cache_on_read: c_int,
+    pub cache_on_write: c_int,
+    pub max_concurrent_uploads: c_int,
+    pub max_concurrent_downloads: c_int,
+    pub multipart_threshold: size_t,
+    pub multipart_part_size: size_t,
+    pub sync_manifest_to_object: c_int,
+    pub replicate_wal: c_int,
+    pub wal_upload_sync: c_int,
+    pub wal_sync_threshold_bytes: size_t,
+    pub wal_sync_on_commit: c_int,
+    pub replica_mode: c_int,
+    pub replica_sync_interval_us: u64,
+    pub replica_replay_wal: c_int,
+}
+
 /// Custom allocator function types
 #[allow(non_camel_case_types)]
 pub type tidesdb_malloc_fn = Option<unsafe extern "C" fn(size: size_t) -> *mut c_void>;
@@ -113,6 +140,14 @@ pub struct tidesdb_config_t {
     pub log_to_file: c_int,
     pub log_truncation_at: size_t,
     pub max_memory_usage: size_t,
+    pub unified_memtable: c_int,
+    pub unified_memtable_write_buffer_size: size_t,
+    pub unified_memtable_skip_list_max_level: c_int,
+    pub unified_memtable_skip_list_probability: c_float,
+    pub unified_memtable_sync_mode: c_int,
+    pub unified_memtable_sync_interval_us: u64,
+    pub object_store: *mut tidesdb_objstore_t,
+    pub object_store_config: *mut tidesdb_objstore_config_t,
 }
 
 /// Commit operation passed to commit hook callback
@@ -167,6 +202,9 @@ pub struct tidesdb_column_family_config_t {
     pub use_btree: c_int,
     pub commit_hook_fn: tidesdb_commit_hook_fn,
     pub commit_hook_ctx: *mut c_void,
+    pub object_target_file_size: size_t,
+    pub object_lazy_compaction: c_int,
+    pub object_prefetch_compaction: c_int,
 }
 
 /// Statistics for a column family
@@ -208,6 +246,22 @@ pub struct tidesdb_db_stats_t {
     pub txn_memory_bytes: i64,
     pub compaction_queue_size: size_t,
     pub flush_queue_size: size_t,
+    pub unified_memtable_enabled: c_int,
+    pub unified_memtable_bytes: i64,
+    pub unified_immutable_count: c_int,
+    pub unified_is_flushing: c_int,
+    pub unified_next_cf_index: u32,
+    pub unified_wal_generation: u64,
+    pub object_store_enabled: c_int,
+    pub object_store_connector: *const c_char,
+    pub local_cache_bytes_used: size_t,
+    pub local_cache_bytes_max: size_t,
+    pub local_cache_num_files: c_int,
+    pub last_uploaded_generation: u64,
+    pub upload_queue_depth: size_t,
+    pub total_uploads: u64,
+    pub total_upload_failures: u64,
+    pub replica_mode: c_int,
 }
 
 /// Cache statistics
@@ -440,6 +494,24 @@ unsafe extern "C" {
         db: *mut tidesdb_t,
         stats: *mut tidesdb_db_stats_t,
     ) -> c_int;
+
+    // Iterator key+value combined
+    pub fn tidesdb_iter_key_value(
+        iter: *mut tidesdb_iter_t,
+        key: *mut *mut u8,
+        key_size: *mut size_t,
+        value: *mut *mut u8,
+        value_size: *mut size_t,
+    ) -> c_int;
+
+    // Promote replica to primary
+    pub fn tidesdb_promote_to_primary(db: *mut tidesdb_t) -> c_int;
+
+    // Object store connector factories
+    pub fn tidesdb_objstore_fs_create(root_dir: *const c_char) -> *mut tidesdb_objstore_t;
+
+    // Object store default config
+    pub fn tidesdb_objstore_default_config() -> tidesdb_objstore_config_t;
 
     // Generic free
     pub fn tidesdb_free(ptr: *mut c_void);

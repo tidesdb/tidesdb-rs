@@ -157,6 +157,44 @@ impl Iterator {
         Ok(key)
     }
 
+    /// Retrieves the current key and value from the iterator in a single call.
+    ///
+    /// This is more efficient than calling `key()` and `value()` separately
+    /// as it requires only one FFI call.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (key, value).
+    pub fn key_value(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let mut key_ptr: *mut u8 = ptr::null_mut();
+        let mut key_len: usize = 0;
+        let mut value_ptr: *mut u8 = ptr::null_mut();
+        let mut value_len: usize = 0;
+
+        let result = unsafe {
+            ffi::tidesdb_iter_key_value(
+                self.iter,
+                &mut key_ptr,
+                &mut key_len,
+                &mut value_ptr,
+                &mut value_len,
+            )
+        };
+        check_result(result, "failed to get key-value")?;
+
+        if key_ptr.is_null() {
+            return Err(Error::NullPointer("key"));
+        }
+        if value_ptr.is_null() {
+            return Err(Error::NullPointer("value"));
+        }
+
+        let key = unsafe { std::slice::from_raw_parts(key_ptr, key_len) }.to_vec();
+        let value = unsafe { std::slice::from_raw_parts(value_ptr, value_len) }.to_vec();
+
+        Ok((key, value))
+    }
+
     /// Retrieves the current value from the iterator.
     ///
     /// # Returns

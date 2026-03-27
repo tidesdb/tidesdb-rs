@@ -36,6 +36,8 @@ pub enum ErrorCode {
     Unknown,
     /// Database is locked
     Locked,
+    /// Database is in read-only mode
+    ReadOnly,
 }
 
 impl ErrorCode {
@@ -53,6 +55,7 @@ impl ErrorCode {
             ffi::TDB_ERR_MEMORY_LIMIT => Some(ErrorCode::MemoryLimit),
             ffi::TDB_ERR_INVALID_DB => Some(ErrorCode::InvalidDb),
             ffi::TDB_ERR_LOCKED => Some(ErrorCode::Locked),
+            ffi::TDB_ERR_READONLY => Some(ErrorCode::ReadOnly),
             _ => Some(ErrorCode::Unknown),
         }
     }
@@ -73,6 +76,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::InvalidDb => write!(f, "invalid database handle"),
             ErrorCode::Unknown => write!(f, "unknown error"),
             ErrorCode::Locked => write!(f, "database is locked"),
+            ErrorCode::ReadOnly => write!(f, "database is read-only"),
         }
     }
 }

@@ -1514,4 +1514,160 @@ mod tests {
         // Purge database with no column families should succeed
         db.purge().unwrap();
     }
+
+    #[test]
+    fn test_unified_memtable_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = Config::new(temp_dir.path())
+            .num_flush_threads(2)
+            .num_compaction_threads(2)
+            .log_level(LogLevel::Info)
+            .block_cache_size(64 * 1024 * 1024)
+            .max_open_sstables(256)
+            .unified_memtable(true)
+            .unified_memtable_write_buffer_size(128 * 1024 * 1024)
+            .unified_memtable_skip_list_max_level(16)
+            .unified_memtable_skip_list_probability(0.25)
+            .unified_memtable_sync_mode(SyncMode::None)
+            .unified_memtable_sync_interval_us(0);
+
+        assert!(config.unified_memtable);
+        assert_eq!(config.unified_memtable_write_buffer_size, 128 * 1024 * 1024);
+        assert_eq!(config.unified_memtable_skip_list_max_level, 16);
+
+        let db = TidesDB::open(config).unwrap();
+        db.create_column_family("test_cf", ColumnFamilyConfig::default()).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert and read data to verify unified memtable works
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"key1", b"value1", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"key1").unwrap();
+            assert_eq!(value, b"value1");
+        }
+    }
+
+    #[test]
+    fn test_iterator_key_value() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert some data
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..10 {
+                let key = format!("key{:02}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Use key_value() combined method
+        {
+            let txn = db.begin_transaction().unwrap();
+            let mut iter = txn.new_iterator(&cf).unwrap();
+            iter.seek_to_first().unwrap();
+
+            let mut count = 0;
+            while iter.is_valid() {
+                let (key, value) = iter.key_value().unwrap();
+                assert!(!key.is_empty());
+                assert!(!value.is_empty());
+                count += 1;
+                iter.next().unwrap();
+            }
+            assert_eq!(count, 10);
+        }
+    }
+
+    #[test]
+    fn test_db_stats_unified_fields() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+
+        let stats = db.get_db_stats().unwrap();
+
+        // Unified memtable fields should be accessible
+        let _ = stats.unified_memtable_enabled;
+        let _ = stats.unified_memtable_bytes;
+        let _ = stats.unified_immutable_count;
+        let _ = stats.unified_is_flushing;
+        let _ = stats.unified_next_cf_index;
+        let _ = stats.unified_wal_generation;
+
+        // Object store fields should be accessible
+        let _ = stats.object_store_enabled;
+        let _ = stats.object_store_connector;
+        let _ = stats.local_cache_bytes_used;
+        let _ = stats.local_cache_bytes_max;
+        let _ = stats.local_cache_num_files;
+        let _ = stats.last_uploaded_generation;
+        let _ = stats.upload_queue_depth;
+        let _ = stats.total_uploads;
+        let _ = stats.total_upload_failures;
+        let _ = stats.replica_mode;
+
+        // For a non-unified, non-object-store db:
+        assert!(!stats.unified_memtable_enabled);
+        assert!(!stats.object_store_enabled);
+        assert!(!stats.replica_mode);
+    }
+
+    #[test]
+    fn test_db_stats_unified_memtable_enabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = Config::new(temp_dir.path())
+            .num_flush_threads(2)
+            .num_compaction_threads(2)
+            .log_level(LogLevel::Info)
+            .block_cache_size(64 * 1024 * 1024)
+            .max_open_sstables(256)
+            .unified_memtable(true);
+
+        let db = TidesDB::open(config).unwrap();
+        db.create_column_family("test_cf", ColumnFamilyConfig::default()).unwrap();
+
+        let stats = db.get_db_stats().unwrap();
+        assert!(stats.unified_memtable_enabled);
+    }
+
+    #[test]
+    fn test_cf_config_object_store_fields() {
+        let config = ColumnFamilyConfig::new()
+            .object_target_file_size(256 * 1024 * 1024)
+            .object_lazy_compaction(true)
+            .object_prefetch_compaction(false);
+
+        assert_eq!(config.object_target_file_size, 256 * 1024 * 1024);
+        assert!(config.object_lazy_compaction);
+        assert!(!config.object_prefetch_compaction);
+    }
+
+    #[test]
+    fn test_error_code_readonly() {
+        // Verify ReadOnly error code is recognized
+        let code = ErrorCode::from_code(-13);
+        assert_eq!(code, Some(ErrorCode::ReadOnly));
+    }
+
+    #[test]
+    fn test_promote_to_primary_not_replica() {
+        let (db, _temp_dir) = create_test_db();
+
+        // promote_to_primary on a non-replica db should return an error
+        let result = db.promote_to_primary();
+        assert!(result.is_err());
+    }
 }

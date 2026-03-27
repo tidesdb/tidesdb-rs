@@ -579,6 +579,14 @@ impl TidesDB {
 
         let c_stats = unsafe { c_stats.assume_init() };
 
+        let object_store_connector = if c_stats.object_store_connector.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(c_stats.object_store_connector) }
+                .to_string_lossy()
+                .into_owned()
+        };
+
         Ok(DbStats {
             num_column_families: c_stats.num_column_families,
             total_memory: c_stats.total_memory,
@@ -595,7 +603,36 @@ impl TidesDB {
             txn_memory_bytes: c_stats.txn_memory_bytes,
             compaction_queue_size: c_stats.compaction_queue_size,
             flush_queue_size: c_stats.flush_queue_size,
+            unified_memtable_enabled: c_stats.unified_memtable_enabled != 0,
+            unified_memtable_bytes: c_stats.unified_memtable_bytes,
+            unified_immutable_count: c_stats.unified_immutable_count,
+            unified_is_flushing: c_stats.unified_is_flushing != 0,
+            unified_next_cf_index: c_stats.unified_next_cf_index,
+            unified_wal_generation: c_stats.unified_wal_generation,
+            object_store_enabled: c_stats.object_store_enabled != 0,
+            object_store_connector,
+            local_cache_bytes_used: c_stats.local_cache_bytes_used,
+            local_cache_bytes_max: c_stats.local_cache_bytes_max,
+            local_cache_num_files: c_stats.local_cache_num_files,
+            last_uploaded_generation: c_stats.last_uploaded_generation,
+            upload_queue_depth: c_stats.upload_queue_depth,
+            total_uploads: c_stats.total_uploads,
+            total_upload_failures: c_stats.total_upload_failures,
+            replica_mode: c_stats.replica_mode != 0,
         })
+    }
+
+    /// Switches a read-only replica to primary mode.
+    ///
+    /// This is only valid when the database was opened in replica mode
+    /// (via object store configuration with `replica_mode` enabled).
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, or an error if the database is not in replica mode.
+    pub fn promote_to_primary(&self) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_promote_to_primary(self.db) };
+        check_result(result, "failed to promote to primary")
     }
 }
 
