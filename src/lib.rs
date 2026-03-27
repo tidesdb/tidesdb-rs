@@ -93,7 +93,8 @@ mod transaction;
 
 // Re-export public types
 pub use config::{
-    ColumnFamilyConfig, CompressionAlgorithm, Config, IsolationLevel, LogLevel, SyncMode,
+    ColumnFamilyConfig, CompressionAlgorithm, Config, IsolationLevel, LogLevel, ObjectStoreConfig,
+    SyncMode,
 };
 pub use db::{finalize, free, init, init_with_allocator, ColumnFamily, CommitOp, TidesDB};
 pub use ffi::{
