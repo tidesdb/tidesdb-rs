@@ -76,6 +76,215 @@ pub enum IsolationLevel {
     Serializable = ffi::TDB_ISOLATION_SERIALIZABLE,
 }
 
+/// Object store behavior configuration.
+///
+/// Controls caching, upload/download parallelism, multipart thresholds,
+/// WAL replication, and replica mode for object store deployments.
+#[derive(Debug, Clone)]
+pub struct ObjectStoreConfig {
+    /// Local directory for cached SSTable files (None = use db_path)
+    pub local_cache_path: Option<String>,
+    /// Maximum local cache size in bytes (0 = unlimited)
+    pub local_cache_max_bytes: usize,
+    /// Cache downloaded files locally (default: true)
+    pub cache_on_read: bool,
+    /// Keep local copy after upload (default: true)
+    pub cache_on_write: bool,
+    /// Number of parallel upload threads (default: 4)
+    pub max_concurrent_uploads: i32,
+    /// Number of parallel download threads (default: 8)
+    pub max_concurrent_downloads: i32,
+    /// Use multipart upload above this size in bytes (default: 64MB)
+    pub multipart_threshold: usize,
+    /// Chunk size for multipart uploads in bytes (default: 8MB)
+    pub multipart_part_size: usize,
+    /// Upload MANIFEST after each compaction (default: true)
+    pub sync_manifest_to_object: bool,
+    /// Upload closed WAL segments for replication (default: true)
+    pub replicate_wal: bool,
+    /// false = background WAL upload (default), true = block flush until uploaded
+    pub wal_upload_sync: bool,
+    /// Sync active WAL when it grows by this many bytes (default: 1MB, 0 = off)
+    pub wal_sync_threshold_bytes: usize,
+    /// Upload WAL after every txn commit for RPO=0 replication (default: false)
+    pub wal_sync_on_commit: bool,
+    /// Enable read-only replica mode (default: false)
+    pub replica_mode: bool,
+    /// MANIFEST poll interval for replica sync in microseconds (default: 5s)
+    pub replica_sync_interval_us: u64,
+    /// Replay WAL from object store for near-real-time reads on replicas (default: true)
+    pub replica_replay_wal: bool,
+}
+
+impl ObjectStoreConfig {
+    /// Create a new object store configuration with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the local cache path (None = use db_path).
+    pub fn local_cache_path(mut self, path: &str) -> Self {
+        self.local_cache_path = Some(path.to_string());
+        self
+    }
+
+    /// Set the maximum local cache size in bytes (0 = unlimited).
+    pub fn local_cache_max_bytes(mut self, size: usize) -> Self {
+        self.local_cache_max_bytes = size;
+        self
+    }
+
+    /// Enable or disable caching downloaded files locally.
+    pub fn cache_on_read(mut self, enable: bool) -> Self {
+        self.cache_on_read = enable;
+        self
+    }
+
+    /// Enable or disable keeping local copy after upload.
+    pub fn cache_on_write(mut self, enable: bool) -> Self {
+        self.cache_on_write = enable;
+        self
+    }
+
+    /// Set the number of parallel upload threads.
+    pub fn max_concurrent_uploads(mut self, n: i32) -> Self {
+        self.max_concurrent_uploads = n;
+        self
+    }
+
+    /// Set the number of parallel download threads.
+    pub fn max_concurrent_downloads(mut self, n: i32) -> Self {
+        self.max_concurrent_downloads = n;
+        self
+    }
+
+    /// Set the multipart upload threshold in bytes.
+    pub fn multipart_threshold(mut self, size: usize) -> Self {
+        self.multipart_threshold = size;
+        self
+    }
+
+    /// Set the multipart chunk size in bytes.
+    pub fn multipart_part_size(mut self, size: usize) -> Self {
+        self.multipart_part_size = size;
+        self
+    }
+
+    /// Enable or disable uploading MANIFEST after each compaction.
+    pub fn sync_manifest_to_object(mut self, enable: bool) -> Self {
+        self.sync_manifest_to_object = enable;
+        self
+    }
+
+    /// Enable or disable uploading closed WAL segments for replication.
+    pub fn replicate_wal(mut self, enable: bool) -> Self {
+        self.replicate_wal = enable;
+        self
+    }
+
+    /// Set WAL upload sync mode (false = background, true = block flush until uploaded).
+    pub fn wal_upload_sync(mut self, enable: bool) -> Self {
+        self.wal_upload_sync = enable;
+        self
+    }
+
+    /// Set the WAL sync threshold in bytes (0 = off).
+    pub fn wal_sync_threshold_bytes(mut self, size: usize) -> Self {
+        self.wal_sync_threshold_bytes = size;
+        self
+    }
+
+    /// Enable or disable uploading WAL after every txn commit (RPO=0).
+    pub fn wal_sync_on_commit(mut self, enable: bool) -> Self {
+        self.wal_sync_on_commit = enable;
+        self
+    }
+
+    /// Enable or disable read-only replica mode.
+    pub fn replica_mode(mut self, enable: bool) -> Self {
+        self.replica_mode = enable;
+        self
+    }
+
+    /// Set the MANIFEST poll interval for replica sync in microseconds.
+    pub fn replica_sync_interval_us(mut self, interval: u64) -> Self {
+        self.replica_sync_interval_us = interval;
+        self
+    }
+
+    /// Enable or disable WAL replay on replicas for near-real-time reads.
+    pub fn replica_replay_wal(mut self, enable: bool) -> Self {
+        self.replica_replay_wal = enable;
+        self
+    }
+
+    /// Convert to C configuration struct.
+    /// Returns the C struct and an optional CString for the cache path that must stay alive.
+    pub(crate) fn to_c_config(&self) -> (ffi::tidesdb_objstore_config_t, Option<CString>) {
+        let (cache_path_ptr, cache_path_cstr) = match &self.local_cache_path {
+            Some(p) => {
+                let cs = CString::new(p.as_str()).unwrap_or_default();
+                let ptr = cs.as_ptr();
+                (ptr, Some(cs))
+            }
+            None => (std::ptr::null(), None),
+        };
+
+        let config = ffi::tidesdb_objstore_config_t {
+            local_cache_path: cache_path_ptr,
+            local_cache_max_bytes: self.local_cache_max_bytes,
+            cache_on_read: if self.cache_on_read { 1 } else { 0 },
+            cache_on_write: if self.cache_on_write { 1 } else { 0 },
+            max_concurrent_uploads: self.max_concurrent_uploads,
+            max_concurrent_downloads: self.max_concurrent_downloads,
+            multipart_threshold: self.multipart_threshold,
+            multipart_part_size: self.multipart_part_size,
+            sync_manifest_to_object: if self.sync_manifest_to_object { 1 } else { 0 },
+            replicate_wal: if self.replicate_wal { 1 } else { 0 },
+            wal_upload_sync: if self.wal_upload_sync { 1 } else { 0 },
+            wal_sync_threshold_bytes: self.wal_sync_threshold_bytes,
+            wal_sync_on_commit: if self.wal_sync_on_commit { 1 } else { 0 },
+            replica_mode: if self.replica_mode { 1 } else { 0 },
+            replica_sync_interval_us: self.replica_sync_interval_us,
+            replica_replay_wal: if self.replica_replay_wal { 1 } else { 0 },
+        };
+
+        (config, cache_path_cstr)
+    }
+}
+
+impl Default for ObjectStoreConfig {
+    fn default() -> Self {
+        let c = unsafe { ffi::tidesdb_objstore_default_config() };
+        ObjectStoreConfig {
+            local_cache_path: None,
+            local_cache_max_bytes: c.local_cache_max_bytes,
+            cache_on_read: c.cache_on_read != 0,
+            cache_on_write: c.cache_on_write != 0,
+            max_concurrent_uploads: c.max_concurrent_uploads,
+            max_concurrent_downloads: c.max_concurrent_downloads,
+            multipart_threshold: c.multipart_threshold,
+            multipart_part_size: c.multipart_part_size,
+            sync_manifest_to_object: c.sync_manifest_to_object != 0,
+            replicate_wal: c.replicate_wal != 0,
+            wal_upload_sync: c.wal_upload_sync != 0,
+            wal_sync_threshold_bytes: c.wal_sync_threshold_bytes,
+            wal_sync_on_commit: c.wal_sync_on_commit != 0,
+            replica_mode: c.replica_mode != 0,
+            replica_sync_interval_us: c.replica_sync_interval_us,
+            replica_replay_wal: c.replica_replay_wal != 0,
+        }
+    }
+}
+
+/// Holds all C-side allocations that must outlive the `tidesdb_open()` call.
+pub(crate) struct CConfigData {
+    pub config: ffi::tidesdb_config_t,
+    _db_path: CString,
+    _objstore_config: Option<Box<ffi::tidesdb_objstore_config_t>>,
+    _cache_path: Option<CString>,
+}
+
 /// Database configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -109,6 +318,10 @@ pub struct Config {
     pub unified_memtable_sync_mode: SyncMode,
     /// Sync interval for unified WAL in microseconds (0 = default)
     pub unified_memtable_sync_interval_us: u64,
+    /// Filesystem root directory for the object store connector (None = no object store)
+    pub object_store_fs_path: Option<String>,
+    /// Object store behavior configuration (None = use defaults when object store is set)
+    pub object_store_config: Option<ObjectStoreConfig>,
 }
 
 impl Config {
@@ -130,6 +343,8 @@ impl Config {
             unified_memtable_skip_list_probability: 0.0,
             unified_memtable_sync_mode: SyncMode::None,
             unified_memtable_sync_interval_us: 0,
+            object_store_fs_path: None,
+            object_store_config: None,
         }
     }
 
@@ -219,9 +434,63 @@ impl Config {
         self
     }
 
+    /// Enable object store mode with a filesystem connector.
+    ///
+    /// Stores objects as files under `root_dir` mirroring the key path structure.
+    /// Useful for testing and local replication (e.g., NFS mount).
+    ///
+    /// Object store mode automatically enables unified memtable mode.
+    pub fn object_store_fs(mut self, root_dir: &str) -> Self {
+        self.object_store_fs_path = Some(root_dir.to_string());
+        self
+    }
+
+    /// Set the object store behavior configuration.
+    ///
+    /// Controls caching, upload/download parallelism, WAL replication,
+    /// replica mode, and other object store behavior. If not set when an
+    /// object store connector is configured, defaults are used.
+    pub fn object_store_config(mut self, config: ObjectStoreConfig) -> Self {
+        self.object_store_config = Some(config);
+        self
+    }
+
     /// Convert to C configuration struct.
-    pub(crate) fn to_c_config(&self) -> crate::error::Result<(ffi::tidesdb_config_t, CString)> {
+    /// Returns a `CConfigData` that owns all heap allocations needed during `tidesdb_open`.
+    pub(crate) fn to_c_config(&self) -> crate::error::Result<CConfigData> {
         let c_path = CString::new(self.db_path.as_str())?;
+
+        // Build object store connector if configured
+        let objstore_ptr = match &self.object_store_fs_path {
+            Some(root_dir) => {
+                let c_root = CString::new(root_dir.as_str())?;
+                let ptr = unsafe { ffi::tidesdb_objstore_fs_create(c_root.as_ptr()) };
+                if ptr.is_null() {
+                    return Err(crate::error::Error::NullPointer("object store connector"));
+                }
+                ptr
+            }
+            None => std::ptr::null_mut(),
+        };
+
+        // Build object store config if configured (or if connector is set, use defaults)
+        let (boxed_os_config, cache_path_cstr) = if !objstore_ptr.is_null() {
+            let os_cfg = self
+                .object_store_config
+                .as_ref()
+                .cloned()
+                .unwrap_or_default();
+            let (c_os_config, cache_cstr) = os_cfg.to_c_config();
+            (Some(Box::new(c_os_config)), cache_cstr)
+        } else {
+            (None, None)
+        };
+
+        let os_config_ptr = match &boxed_os_config {
+            Some(b) => &**b as *const ffi::tidesdb_objstore_config_t as *mut _,
+            None => std::ptr::null_mut(),
+        };
+
         let config = ffi::tidesdb_config_t {
             db_path: c_path.as_ptr(),
             num_flush_threads: self.num_flush_threads,
@@ -238,10 +507,16 @@ impl Config {
             unified_memtable_skip_list_probability: self.unified_memtable_skip_list_probability,
             unified_memtable_sync_mode: self.unified_memtable_sync_mode as i32,
             unified_memtable_sync_interval_us: self.unified_memtable_sync_interval_us,
-            object_store: std::ptr::null_mut(),
-            object_store_config: std::ptr::null_mut(),
+            object_store: objstore_ptr,
+            object_store_config: os_config_ptr,
         };
-        Ok((config, c_path))
+
+        Ok(CConfigData {
+            config,
+            _db_path: c_path,
+            _objstore_config: boxed_os_config,
+            _cache_path: cache_path_cstr,
+        })
     }
 }
 
@@ -263,6 +538,8 @@ impl Default for Config {
             unified_memtable_skip_list_probability: 0.0,
             unified_memtable_sync_mode: SyncMode::None,
             unified_memtable_sync_interval_us: 0,
+            object_store_fs_path: None,
+            object_store_config: None,
         }
     }
 }

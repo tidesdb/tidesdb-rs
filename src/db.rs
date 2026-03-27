@@ -210,10 +210,10 @@ impl TidesDB {
     ///
     /// A new TidesDB instance or an error if the database cannot be opened.
     pub fn open(config: Config) -> Result<Self> {
-        let (c_config, _c_path) = config.to_c_config()?;
+        let c_data = config.to_c_config()?;
         let mut db: *mut ffi::tidesdb_t = ptr::null_mut();
 
-        let result = unsafe { ffi::tidesdb_open(&c_config, &mut db) };
+        let result = unsafe { ffi::tidesdb_open(&c_data.config, &mut db) };
         check_result(result, "failed to open database")?;
 
         if db.is_null() {
