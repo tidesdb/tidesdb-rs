@@ -97,6 +97,18 @@ pub struct Config {
     pub log_to_file: bool,
     /// Log file truncation threshold in bytes (0 = no truncation)
     pub log_truncation_at: usize,
+    /// Enable unified memtable mode (default: false = per-CF memtables)
+    pub unified_memtable: bool,
+    /// Unified memtable write buffer size (0 = auto)
+    pub unified_memtable_write_buffer_size: usize,
+    /// Skip list max level for unified memtable (0 = default 12)
+    pub unified_memtable_skip_list_max_level: i32,
+    /// Skip list probability for unified memtable (0 = default 0.25)
+    pub unified_memtable_skip_list_probability: f32,
+    /// Sync mode for unified WAL (default: SyncMode::None)
+    pub unified_memtable_sync_mode: SyncMode,
+    /// Sync interval for unified WAL in microseconds (0 = default)
+    pub unified_memtable_sync_interval_us: u64,
 }
 
 impl Config {
@@ -112,6 +124,12 @@ impl Config {
             max_memory_usage: 0, // auto (50% of system RAM)
             log_to_file: false,
             log_truncation_at: 24 * 1024 * 1024, // 24MB
+            unified_memtable: false,
+            unified_memtable_write_buffer_size: 0,
+            unified_memtable_skip_list_max_level: 0,
+            unified_memtable_skip_list_probability: 0.0,
+            unified_memtable_sync_mode: SyncMode::None,
+            unified_memtable_sync_interval_us: 0,
         }
     }
 
@@ -164,6 +182,43 @@ impl Config {
         self
     }
 
+    /// Enable or disable unified memtable mode.
+    /// When enabled, all column families share a single memtable and WAL.
+    pub fn unified_memtable(mut self, enable: bool) -> Self {
+        self.unified_memtable = enable;
+        self
+    }
+
+    /// Set the unified memtable write buffer size (0 = auto).
+    pub fn unified_memtable_write_buffer_size(mut self, size: usize) -> Self {
+        self.unified_memtable_write_buffer_size = size;
+        self
+    }
+
+    /// Set the skip list max level for unified memtable (0 = default 12).
+    pub fn unified_memtable_skip_list_max_level(mut self, level: i32) -> Self {
+        self.unified_memtable_skip_list_max_level = level;
+        self
+    }
+
+    /// Set the skip list probability for unified memtable (0 = default 0.25).
+    pub fn unified_memtable_skip_list_probability(mut self, prob: f32) -> Self {
+        self.unified_memtable_skip_list_probability = prob;
+        self
+    }
+
+    /// Set the sync mode for unified WAL.
+    pub fn unified_memtable_sync_mode(mut self, mode: SyncMode) -> Self {
+        self.unified_memtable_sync_mode = mode;
+        self
+    }
+
+    /// Set the sync interval for unified WAL in microseconds.
+    pub fn unified_memtable_sync_interval_us(mut self, interval: u64) -> Self {
+        self.unified_memtable_sync_interval_us = interval;
+        self
+    }
+
     /// Convert to C configuration struct.
     pub(crate) fn to_c_config(&self) -> crate::error::Result<(ffi::tidesdb_config_t, CString)> {
         let c_path = CString::new(self.db_path.as_str())?;
@@ -177,6 +232,14 @@ impl Config {
             log_to_file: if self.log_to_file { 1 } else { 0 },
             log_truncation_at: self.log_truncation_at,
             max_memory_usage: self.max_memory_usage,
+            unified_memtable: if self.unified_memtable { 1 } else { 0 },
+            unified_memtable_write_buffer_size: self.unified_memtable_write_buffer_size,
+            unified_memtable_skip_list_max_level: self.unified_memtable_skip_list_max_level,
+            unified_memtable_skip_list_probability: self.unified_memtable_skip_list_probability,
+            unified_memtable_sync_mode: self.unified_memtable_sync_mode as i32,
+            unified_memtable_sync_interval_us: self.unified_memtable_sync_interval_us,
+            object_store: std::ptr::null_mut(),
+            object_store_config: std::ptr::null_mut(),
         };
         Ok((config, c_path))
     }
@@ -194,6 +257,12 @@ impl Default for Config {
             max_memory_usage: 0,
             log_to_file: false,
             log_truncation_at: 24 * 1024 * 1024,
+            unified_memtable: false,
+            unified_memtable_write_buffer_size: 0,
+            unified_memtable_skip_list_max_level: 0,
+            unified_memtable_skip_list_probability: 0.0,
+            unified_memtable_sync_mode: SyncMode::None,
+            unified_memtable_sync_interval_us: 0,
         }
     }
 }
@@ -243,6 +312,12 @@ pub struct ColumnFamilyConfig {
     pub l0_queue_stall_threshold: i32,
     /// Use B+tree format for klog (default: false = block-based)
     pub use_btree: bool,
+    /// Target SSTable size in object store mode (default 256MB, 0 = auto)
+    pub object_target_file_size: usize,
+    /// Compact less aggressively in object store mode (default: false)
+    pub object_lazy_compaction: bool,
+    /// Download all inputs before merge in object store mode (default: true)
+    pub object_prefetch_compaction: bool,
 }
 
 impl ColumnFamilyConfig {
@@ -378,6 +453,24 @@ impl ColumnFamilyConfig {
         self
     }
 
+    /// Set the target SSTable size in object store mode (default 256MB, 0 = auto).
+    pub fn object_target_file_size(mut self, size: usize) -> Self {
+        self.object_target_file_size = size;
+        self
+    }
+
+    /// Enable or disable lazy compaction in object store mode.
+    pub fn object_lazy_compaction(mut self, enable: bool) -> Self {
+        self.object_lazy_compaction = enable;
+        self
+    }
+
+    /// Enable or disable prefetch compaction in object store mode.
+    pub fn object_prefetch_compaction(mut self, enable: bool) -> Self {
+        self.object_prefetch_compaction = enable;
+        self
+    }
+
     /// Load configuration from an INI file.
     ///
     /// # Arguments
@@ -473,6 +566,9 @@ impl ColumnFamilyConfig {
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
             use_btree: c_config.use_btree != 0,
+            object_target_file_size: c_config.object_target_file_size,
+            object_lazy_compaction: c_config.object_lazy_compaction != 0,
+            object_prefetch_compaction: c_config.object_prefetch_compaction != 0,
         }
     }
 
@@ -506,6 +602,9 @@ impl ColumnFamilyConfig {
             use_btree: if self.use_btree { 1 } else { 0 },
             commit_hook_fn: None,
             commit_hook_ctx: std::ptr::null_mut(),
+            object_target_file_size: self.object_target_file_size,
+            object_lazy_compaction: if self.object_lazy_compaction { 1 } else { 0 },
+            object_prefetch_compaction: if self.object_prefetch_compaction { 1 } else { 0 },
         };
 
         // Copy comparator name
@@ -575,6 +674,9 @@ impl Default for ColumnFamilyConfig {
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
             use_btree: c_config.use_btree != 0,
+            object_target_file_size: c_config.object_target_file_size,
+            object_lazy_compaction: c_config.object_lazy_compaction != 0,
+            object_prefetch_compaction: c_config.object_prefetch_compaction != 0,
         }
     }
 }
