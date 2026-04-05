@@ -18,12 +18,22 @@ thiserror = "1.0"
 
 [build-dependencies]
 pkg-config = "0.3"
+cmake = "0.1"
+ureq = "2"
+flate2 = "1"
+tar = "0.4"
 
 [dev-dependencies]
 tempfile = "3.10"
 
 [features]
-default = []
+default = ["v9_0_5"]
+v9_0_0 = []
+v9_0_1 = []
+v9_0_2 = []
+v9_0_3 = []
+v9_0_4 = []
+v9_0_5 = []
 
 [lib]
 name = "tidesdb"
