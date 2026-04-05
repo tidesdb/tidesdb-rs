@@ -71,14 +71,23 @@ fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
     src_dir
 }
 
+fn with_objectstore() -> bool {
+    std::env::var("CARGO_FEATURE_OBJECTSTORE").is_ok()
+}
+
 fn build_from_source(version: &str) -> PathBuf {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let src_dir = download_and_extract(version, &out_dir);
 
-    cmake::Config::new(&src_dir)
-        .define("TIDESDB_BUILD_TESTS", "OFF")
-        .define("BUILD_SHARED_LIBS", "OFF")
-        .build()
+    let mut cfg = cmake::Config::new(&src_dir);
+    cfg.define("TIDESDB_BUILD_TESTS", "OFF")
+        .define("BUILD_SHARED_LIBS", "OFF");
+
+    if with_objectstore() {
+        cfg.define("TIDESDB_WITH_S3", "ON");
+    }
+
+    cfg.build()
 }
 
 fn brew_prefix() -> Option<String> {
@@ -117,15 +126,38 @@ fn main() {
             missing.push(lib_name);
         }
     }
+    // Link S3/object store dependencies (libcurl + openssl)
+    if with_objectstore() {
+        if pkg_config::probe_library("libcurl").is_err() {
+            println!("cargo:rustc-link-lib=curl");
+            missing.push("curl");
+        }
+        if pkg_config::probe_library("openssl").is_err() {
+            println!("cargo:rustc-link-lib=ssl");
+            println!("cargo:rustc-link-lib=crypto");
+            missing.push("ssl/crypto");
+        }
+    }
+
     if !missing.is_empty() {
-        println!(
+        let mut msg = format!(
             "cargo:warning=Could not find {} via pkg-config, falling back to link by name. \
              If linking fails, install them:\n\
-             \x20 Debian/Ubuntu: sudo apt install libzstd-dev liblz4-dev libsnappy-dev\n\
-             \x20 macOS:         brew install zstd lz4 snappy\n\
-             \x20 Windows:       vcpkg install zstd:x64-windows lz4:x64-windows snappy:x64-windows",
+             \x20 Debian/Ubuntu: sudo apt install libzstd-dev liblz4-dev libsnappy-dev",
             missing.join(", ")
         );
+        if with_objectstore() {
+            msg.push_str(" libcurl4-openssl-dev libssl-dev");
+        }
+        msg.push_str("\n\x20 macOS:         brew install zstd lz4 snappy");
+        if with_objectstore() {
+            msg.push_str(" curl openssl");
+        }
+        msg.push_str("\n\x20 Windows:       vcpkg install zstd:x64-windows lz4:x64-windows snappy:x64-windows");
+        if with_objectstore() {
+            msg.push_str(" curl:x64-windows openssl:x64-windows");
+        }
+        println!("{msg}");
     }
 
     // Platform-specific dependencies
