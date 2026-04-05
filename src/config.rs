@@ -589,8 +589,6 @@ pub struct ColumnFamilyConfig {
     pub l0_queue_stall_threshold: i32,
     /// Use B+tree format for klog (default: false = block-based)
     pub use_btree: bool,
-    /// Target SSTable size in object store mode (default 256MB, 0 = auto)
-    pub object_target_file_size: usize,
     /// Compact less aggressively in object store mode (default: false)
     pub object_lazy_compaction: bool,
     /// Download all inputs before merge in object store mode (default: true)
@@ -730,12 +728,6 @@ impl ColumnFamilyConfig {
         self
     }
 
-    /// Set the target SSTable size in object store mode (default 256MB, 0 = auto).
-    pub fn object_target_file_size(mut self, size: usize) -> Self {
-        self.object_target_file_size = size;
-        self
-    }
-
     /// Enable or disable lazy compaction in object store mode.
     pub fn object_lazy_compaction(mut self, enable: bool) -> Self {
         self.object_lazy_compaction = enable;
@@ -843,7 +835,6 @@ impl ColumnFamilyConfig {
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
             use_btree: c_config.use_btree != 0,
-            object_target_file_size: c_config.object_target_file_size,
             object_lazy_compaction: c_config.object_lazy_compaction != 0,
             object_prefetch_compaction: c_config.object_prefetch_compaction != 0,
         }
@@ -879,7 +870,6 @@ impl ColumnFamilyConfig {
             use_btree: if self.use_btree { 1 } else { 0 },
             commit_hook_fn: None,
             commit_hook_ctx: std::ptr::null_mut(),
-            object_target_file_size: self.object_target_file_size,
             object_lazy_compaction: if self.object_lazy_compaction { 1 } else { 0 },
             object_prefetch_compaction: if self.object_prefetch_compaction { 1 } else { 0 },
         };
@@ -951,7 +941,6 @@ impl Default for ColumnFamilyConfig {
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
             use_btree: c_config.use_btree != 0,
-            object_target_file_size: c_config.object_target_file_size,
             object_lazy_compaction: c_config.object_lazy_compaction != 0,
             object_prefetch_compaction: c_config.object_prefetch_compaction != 0,
         }

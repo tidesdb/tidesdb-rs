@@ -1647,11 +1647,9 @@ mod tests {
     #[test]
     fn test_cf_config_object_store_fields() {
         let config = ColumnFamilyConfig::new()
-            .object_target_file_size(256 * 1024 * 1024)
             .object_lazy_compaction(true)
             .object_prefetch_compaction(false);
 
-        assert_eq!(config.object_target_file_size, 256 * 1024 * 1024);
         assert!(config.object_lazy_compaction);
         assert!(!config.object_prefetch_compaction);
     }

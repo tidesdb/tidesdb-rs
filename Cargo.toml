@@ -1,9 +1,9 @@
 [package]
 name = "tidesdb"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2024"
 authors = ["TidesDB <hello@tidesdb.com>"]
-description = "Safe Rust bindings for TidesDB - A high-performance embedded key-value storage engine"
+description = "TidesDB is a high-performance embeddable, durable, adaptive, and optionally cloud-native key-value storage engine"
 license = "MPL-2.0"
 repository = "https://github.com/tidesdb/tidesdb-rs"
 homepage = "https://tidesdb.com"

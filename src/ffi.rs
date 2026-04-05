@@ -202,7 +202,6 @@ pub struct tidesdb_column_family_config_t {
     pub use_btree: c_int,
     pub commit_hook_fn: tidesdb_commit_hook_fn,
     pub commit_hook_ctx: *mut c_void,
-    pub object_target_file_size: size_t,
     pub object_lazy_compaction: c_int,
     pub object_prefetch_compaction: c_int,
 }
