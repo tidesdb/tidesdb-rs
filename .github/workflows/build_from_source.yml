@@ -137,8 +137,8 @@ jobs:
             name: Linux x64 (objectstore)
           - os: macos-latest
             name: macOS x64 (objectstore)
-          - os: windows-latest
-            name: Windows x64 (objectstore)
+          # Windows excluded: tidesdb S3 connector uses POSIX-only
+          # functions (gmtime_r, fmemopen) not available on MinGW
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
@@ -157,95 +157,10 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install zstd lz4 snappy cmake curl openssl
 
-      - name: Setup MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-make
-            mingw-w64-x86_64-zstd
-            mingw-w64-x86_64-lz4
-            mingw-w64-x86_64-snappy
-            mingw-w64-x86_64-curl
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-rust
-
-      - name: Create CMake config files for MSYS2 packages (Windows)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          MINGW_PREFIX_WIN=$(cygpath -m /mingw64)
-
-          mkdir -p /mingw64/lib/cmake/lz4
-          mkdir -p /mingw64/lib/cmake/zstd
-          mkdir -p /mingw64/lib/cmake/Snappy
-          mkdir -p /mingw64/lib/cmake/PThreads4W
-
-          cat > /mingw64/lib/cmake/lz4/lz4-config.cmake << EOF
-          if(NOT TARGET lz4::lz4)
-            add_library(lz4::lz4 SHARED IMPORTED)
-            set_target_properties(lz4::lz4 PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/liblz4.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/liblz4.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-          cat > /mingw64/lib/cmake/zstd/zstd-config.cmake << EOF
-          if(NOT TARGET zstd::libzstd_shared)
-            add_library(zstd::libzstd_shared SHARED IMPORTED)
-            set_target_properties(zstd::libzstd_shared PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libzstd.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libzstd.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-          cat > /mingw64/lib/cmake/Snappy/Snappy-config.cmake << EOF
-          if(NOT TARGET Snappy::snappy)
-            add_library(Snappy::snappy SHARED IMPORTED)
-            set_target_properties(Snappy::snappy PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libsnappy.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libsnappy.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-          cat > /mingw64/lib/cmake/PThreads4W/PThreads4W-config.cmake << EOF
-          if(NOT TARGET PThreads4W::PThreads4W)
-            add_library(PThreads4W::PThreads4W SHARED IMPORTED)
-            set_target_properties(PThreads4W::PThreads4W PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libwinpthread-1.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libpthread.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
       - name: Install Rust toolchain
-        if: runner.os != 'Windows'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.85.0
 
-      - name: Build from source with objectstore (Linux)
-        if: runner.os == 'Linux'
+      - name: Build from source with objectstore
         run: cargo build --release --features objectstore
-
-      - name: Build from source with objectstore (macOS)
-        if: runner.os == 'macOS'
-        run: cargo build --release --features objectstore
-
-      - name: Build from source with objectstore (Windows)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          export PATH="/mingw64/bin:$PATH"
-          cargo build --release --features objectstore

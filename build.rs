@@ -100,6 +100,14 @@ fn brew_prefix() -> Option<String> {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    if with_objectstore() {
+        panic!(
+            "The `objectstore` feature is not currently supported on Windows. \
+             tidesdb's S3 connector uses POSIX-only functions (gmtime_r, fmemopen)."
+        );
+    }
+
     let version = selected_version();
 
     // Try pkg-config with exact version match
