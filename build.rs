@@ -5,33 +5,20 @@
 
 use std::path::PathBuf;
 
-const VERSION_FEATURES: &[(&str, &str)] = &[
-    ("v9_0_0", "9.0.0"),
-    ("v9_0_1", "9.0.1"),
-    ("v9_0_2", "9.0.2"),
-    ("v9_0_3", "9.0.3"),
-    ("v9_0_4", "9.0.4"),
-    ("v9_0_5", "9.0.5"),
-];
-
-fn selected_version() -> &'static str {
-    let mut selected: Option<&str> = None;
-    for &(feature, version) in VERSION_FEATURES {
-        if std::env::var(format!("CARGO_FEATURE_{}", feature.to_uppercase())).is_ok() {
+/// Derives the tidesdb version from enabled `v*` Cargo features.
+/// Feature `v9_0_5` maps to version `9.0.5`.
+fn selected_version() -> String {
+    let mut selected: Option<String> = None;
+    for (key, _) in std::env::vars() {
+        if let Some(feature) = key.strip_prefix("CARGO_FEATURE_V") {
+            let version = feature.to_lowercase().replace('_', ".");
             if selected.is_some() {
-                panic!(
-                    "Multiple tidesdb version features enabled. Select exactly one of: {}",
-                    VERSION_FEATURES
-                        .iter()
-                        .map(|(f, _)| *f)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
+                panic!("Multiple tidesdb version features enabled. Select exactly one.");
             }
             selected = Some(version);
         }
     }
-    selected.unwrap_or("9.0.5")
+    selected.unwrap_or_else(|| "9.0.5".to_string())
 }
 
 fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
@@ -112,7 +99,7 @@ fn main() {
 
     // Try pkg-config with exact version match
     if pkg_config::Config::new()
-        .exactly_version(version)
+        .exactly_version(&version)
         .probe("tidesdb")
         .is_ok()
     {
@@ -120,7 +107,7 @@ fn main() {
     }
 
     // Build from source
-    let dst = build_from_source(version);
+    let dst = build_from_source(&version);
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=tidesdb");
