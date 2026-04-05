@@ -18,7 +18,7 @@ fn selected_version() -> String {
             selected = Some(version);
         }
     }
-    selected.unwrap_or_else(|| "9.0.5".to_string())
+    selected.unwrap_or_else(|| "9.0.6".to_string())
 }
 
 fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
@@ -86,8 +86,27 @@ fn brew_prefix() -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
+#[cfg(target_os = "windows")]
+fn version_less_than(version: &str, major: u32, minor: u32, patch: u32) -> bool {
+    let parts: Vec<u32> = version.split('.').filter_map(|s| s.parse().ok()).collect();
+    match parts.as_slice() {
+        [a, b, c] => (*a, *b, *c) < (major, minor, patch),
+        _ => false,
+    }
+}
+
 fn main() {
     let version = selected_version();
+
+    // tidesdb S3 connector uses POSIX-only functions (gmtime_r, fmemopen)
+    // that were not available on Windows until v9.0.6
+    #[cfg(target_os = "windows")]
+    if with_objectstore() && version_less_than(&version, 9, 0, 6) {
+        panic!(
+            "The `objectstore` feature requires tidesdb >= 9.0.6 on Windows. \
+             Versions before 9.0.6 use POSIX-only functions (gmtime_r, fmemopen)."
+        );
+    }
 
     // Try pkg-config with exact version match
     if pkg_config::Config::new()

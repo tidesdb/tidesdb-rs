@@ -27,13 +27,14 @@ tar = "0.4"
 tempfile = "3.10"
 
 [features]
-default = ["v9_0_5"]
+default = ["v9_0_6"]
 v9_0_0 = []
 v9_0_1 = []
 v9_0_2 = []
 v9_0_3 = []
 v9_0_4 = []
 v9_0_5 = []
+v9_0_6 = []
 objectstore = []
 
 [lib]
