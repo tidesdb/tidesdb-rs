@@ -15,6 +15,8 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux x64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
           - os: macos-latest
             name: macOS x64
           - os: windows-latest
@@ -135,6 +137,8 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux x64 (objectstore)
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64 (objectstore)
           - os: macos-latest
             name: macOS x64 (objectstore)
           # Windows excluded: tidesdb S3 connector uses POSIX-only

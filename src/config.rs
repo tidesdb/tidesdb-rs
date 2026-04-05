@@ -879,7 +879,7 @@ impl ColumnFamilyConfig {
             let bytes = self.comparator_name.as_bytes();
             let len = bytes.len().min(ffi::TDB_MAX_COMPARATOR_NAME - 1);
             for (i, &b) in bytes[..len].iter().enumerate() {
-                config.comparator_name[i] = b as i8;
+                config.comparator_name[i] = b as libc::c_char;
             }
         }
 
