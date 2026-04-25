@@ -1669,4 +1669,78 @@ mod tests {
         let result = db.promote_to_primary();
         assert!(result.is_err());
     }
+
+    #[cfg(feature = "v9_1_0")]
+    #[test]
+    fn test_transaction_single_delete() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Put once, single-delete once (matches the single_delete contract)
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"sd_key", b"sd_value", -1).unwrap();
+            txn.commit().unwrap();
+        }
+
+        {
+            let txn = db.begin_transaction().unwrap();
+            let value = txn.get(&cf, b"sd_key").unwrap();
+            assert_eq!(value, b"sd_value");
+        }
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.single_delete(&cf, b"sd_key").unwrap();
+            txn.commit().unwrap();
+        }
+
+        // Verify the key is no longer visible
+        {
+            let txn = db.begin_transaction().unwrap();
+            let result = txn.get(&cf, b"sd_key");
+            assert!(result.is_err());
+        }
+    }
+
+    #[cfg(feature = "v9_1_0")]
+    #[test]
+    fn test_transaction_single_delete_in_batch() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("test_cf", cf_config).unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        // Insert several keys
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..5 {
+                let key = format!("k{}", i);
+                let val = format!("v{}", i);
+                txn.put(&cf, key.as_bytes(), val.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Mix put + single_delete in one batch (different keys)
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            txn.put(&cf, b"k_new", b"v_new", -1).unwrap();
+            txn.single_delete(&cf, b"k0").unwrap();
+            txn.single_delete(&cf, b"k1").unwrap();
+            txn.commit().unwrap();
+        }
+
+        {
+            let txn = db.begin_transaction().unwrap();
+            assert!(txn.get(&cf, b"k0").is_err());
+            assert!(txn.get(&cf, b"k1").is_err());
+            assert_eq!(txn.get(&cf, b"k2").unwrap(), b"v2");
+            assert_eq!(txn.get(&cf, b"k_new").unwrap(), b"v_new");
+        }
+    }
 }

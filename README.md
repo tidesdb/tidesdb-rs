@@ -31,8 +31,3 @@ Multiple licenses apply:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Support
-
-- [Discord](https://discord.gg/tWEmjR66cy)
-- [GitHub Issues](https://github.com/tidesdb/tidesdb-rs/issues)
