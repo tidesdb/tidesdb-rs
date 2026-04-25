@@ -439,7 +439,7 @@ impl TidesDB {
     /// Registers a custom comparator with the database.
     ///
     /// The comparator function determines the sort order of keys throughout the entire
-    /// system: memtables, SSTables, block indexes, and iterators. Once a comparator
+    /// syste, memtables, SSTables, block indexes, and iterators. Once a comparator
     /// is set for a column family, it **cannot be changed** without corrupting data.
     ///
     /// # Arguments
@@ -495,7 +495,7 @@ impl TidesDB {
         }
 
         // The context is now owned by the C library for the lifetime of the database.
-        // It will be leaked intentionally — the C API has no destroy callback for comparators.
+        // It will be leaked intentionally - the C API has no destroy callback for comparators.
         // The memory is freed when the process exits.
 
         Ok(())
@@ -560,7 +560,7 @@ impl TidesDB {
     /// Forces a synchronous flush and aggressive compaction for **all** column families,
     /// then drains both the global flush and compaction queues.
     ///
-    /// This is a blocking operation — it will not return until all flush and compaction
+    /// This is a blocking operation - it will not return until all flush and compaction
     /// work is complete.
     pub fn purge(&self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_purge(self.db) };
@@ -794,10 +794,10 @@ impl ColumnFamily {
     }
 
     /// Estimates the computational cost of iterating between two keys in this column family.
-    /// The returned value is an opaque double — meaningful only for comparison with other
+    /// The returned value is an opaque double - meaningful only for comparison with other
     /// values from the same function. Uses only in-memory metadata and performs no disk I/O.
     ///
-    /// Key order does not matter — the function normalizes the range so `key_a > key_b`
+    /// Key order does not matter - the function normalizes the range so `key_a > key_b`
     /// produces the same result as `key_b > key_a`.
     ///
     /// # Arguments
@@ -834,7 +834,7 @@ impl ColumnFamily {
     /// change data capture without WAL parsing.
     ///
     /// The hook fires after WAL write, memtable apply, and commit status marking are
-    /// complete — the data is fully durable before the callback runs. Hook failure
+    /// complete - the data is fully durable before the callback runs. Hook failure
     /// (non-zero return) is logged but does not affect the commit result.
     ///
     /// # Arguments

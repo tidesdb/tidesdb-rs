@@ -6,6 +6,8 @@
 //! Raw FFI bindings to the TidesDB C library.
 //! These are unsafe and should not be used directly.
 
+#![allow(dead_code)]
+
 use libc::{c_char, c_double, c_float, c_int, c_void, size_t, time_t};
 
 /// Maximum comparator name length
