@@ -146,6 +146,45 @@ impl Transaction {
         check_result(result, "failed to delete key")
     }
 
+    /// Writes a single-delete tombstone for the key.
+    ///
+    /// `single_delete` has the same read semantics as [`delete`](Self::delete), but
+    /// carries a caller-provided promise that lets compaction drop the put and the
+    /// tombstone together as soon as both appear in the same merge input, rather than
+    /// carrying the tombstone forward until the largest active level.
+    ///
+    /// # Contract
+    ///
+    /// Between any two single-deletes on the same key (and between the start of the
+    /// key's history and its first single-delete), the key must have been put **at
+    /// most once**. The engine does not verify this at runtime; violating the contract
+    /// can leave older puts visible after the single-delete and is a bug in the caller.
+    ///
+    /// Use this for workloads where each key is inserted exactly once and then deleted
+    /// exactly once (insert-benchmark patterns, secondary-index entries on immutable
+    /// columns, log-style tables with scheduled purges). It is **not** safe for tables
+    /// that issue repeated updates to the same key. When in doubt, use
+    /// [`delete`](Self::delete).
+    ///
+    /// Requires tidesdb >= 9.1.0 (the `v9_1_0` Cargo feature).
+    ///
+    /// # Arguments
+    ///
+    /// * `cf` - The column family
+    /// * `key` - The key
+    #[cfg(feature = "v9_1_0")]
+    pub fn single_delete(&self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+        let key_ptr = if key.is_empty() {
+            ptr::null()
+        } else {
+            key.as_ptr()
+        };
+
+        let result =
+            unsafe { ffi::tidesdb_txn_single_delete(self.txn, cf.cf, key_ptr, key.len()) };
+        check_result(result, "failed to single-delete key")
+    }
+
     /// Commits the transaction.
     ///
     /// After committing, the transaction cannot be used for further operations

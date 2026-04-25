@@ -18,7 +18,7 @@ fn selected_version() -> String {
             selected = Some(version);
         }
     }
-    selected.unwrap_or_else(|| "9.0.6".to_string())
+    selected.unwrap_or_else(|| "9.1.0".to_string())
 }
 
 fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
