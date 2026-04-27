@@ -42,6 +42,16 @@ pub struct Stats {
     pub btree_max_height: u32,
     /// Average tree height across all SSTables (only populated if use_btree=true)
     pub btree_avg_height: f64,
+    /// Sum of `tombstone_count` across every SSTable in the column family
+    pub total_tombstones: u64,
+    /// `total_tombstones / total_keys` (0.0 if `total_keys == 0`); range `[0.0, 1.0]`
+    pub tombstone_ratio: f64,
+    /// Per-level tombstone counts (parallels `level_key_counts`)
+    pub level_tombstone_counts: Vec<u64>,
+    /// Worst per-SSTable tombstone density observed in the column family; range `[0.0, 1.0]`
+    pub max_sst_density: f64,
+    /// 1-based level index where `max_sst_density` was observed (0 if no SSTables)
+    pub max_sst_density_level: i32,
 }
 
 /// Database-level aggregate statistics.

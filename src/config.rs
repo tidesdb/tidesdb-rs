@@ -322,29 +322,21 @@ pub struct Config {
     pub object_store_fs_path: Option<String>,
     /// Object store behavior configuration (None = use defaults when object store is set)
     pub object_store_config: Option<ObjectStoreConfig>,
+    /// Global semaphore on the number of in-flight memtable flushes across all column
+    /// families. Bounds peak transient memory and work-queue depth. `0` falls back to
+    /// the library default (`TDB_DEFAULT_MAX_CONCURRENT_FLUSHES`, currently 4).
+    pub max_concurrent_flushes: i32,
 }
 
 impl Config {
     /// Create a new configuration with the given database path.
+    ///
+    /// All other fields are initialized from `tidesdb_default_config()` so the
+    /// binding tracks the library defaults automatically.
     pub fn new<P: AsRef<Path>>(db_path: P) -> Self {
         Config {
             db_path: db_path.as_ref().to_string_lossy().into_owned(),
-            num_flush_threads: 2,
-            num_compaction_threads: 2,
-            log_level: LogLevel::Info,
-            block_cache_size: 64 * 1024 * 1024, // 64MB
-            max_open_sstables: 256,
-            max_memory_usage: 0, // auto (50% of system RAM)
-            log_to_file: false,
-            log_truncation_at: 24 * 1024 * 1024, // 24MB
-            unified_memtable: false,
-            unified_memtable_write_buffer_size: 0,
-            unified_memtable_skip_list_max_level: 0,
-            unified_memtable_skip_list_probability: 0.0,
-            unified_memtable_sync_mode: SyncMode::None,
-            unified_memtable_sync_interval_us: 0,
-            object_store_fs_path: None,
-            object_store_config: None,
+            ..Self::default()
         }
     }
 
@@ -455,6 +447,15 @@ impl Config {
         self
     }
 
+    /// Set the global cap on in-flight memtable flushes across all column families.
+    ///
+    /// Bounds peak transient memory and work-queue depth when many column families
+    /// flush at once. `0` falls back to the library default.
+    pub fn max_concurrent_flushes(mut self, n: i32) -> Self {
+        self.max_concurrent_flushes = n;
+        self
+    }
+
     /// Convert to C configuration struct.
     /// Returns a `CConfigData` that owns all heap allocations needed during `tidesdb_open`.
     pub(crate) fn to_c_config(&self) -> crate::error::Result<CConfigData> {
@@ -509,6 +510,7 @@ impl Config {
             unified_memtable_sync_interval_us: self.unified_memtable_sync_interval_us,
             object_store: objstore_ptr,
             object_store_config: os_config_ptr,
+            max_concurrent_flushes: self.max_concurrent_flushes,
         };
 
         Ok(CConfigData {
@@ -522,24 +524,40 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
+        // Pull defaults from the C library so the binding tracks engine
+        // defaults automatically. `db_path` is left empty; callers must set it
+        // before opening (`Config::new` and the `db_path` builder do this).
+        let c = unsafe { ffi::tidesdb_default_config() };
         Config {
             db_path: String::new(),
-            num_flush_threads: 2,
-            num_compaction_threads: 2,
-            log_level: LogLevel::Info,
-            block_cache_size: 64 * 1024 * 1024,
-            max_open_sstables: 256,
-            max_memory_usage: 0,
-            log_to_file: false,
-            log_truncation_at: 24 * 1024 * 1024,
-            unified_memtable: false,
-            unified_memtable_write_buffer_size: 0,
-            unified_memtable_skip_list_max_level: 0,
-            unified_memtable_skip_list_probability: 0.0,
-            unified_memtable_sync_mode: SyncMode::None,
-            unified_memtable_sync_interval_us: 0,
+            num_flush_threads: c.num_flush_threads,
+            num_compaction_threads: c.num_compaction_threads,
+            log_level: match c.log_level {
+                ffi::TDB_LOG_DEBUG => LogLevel::Debug,
+                ffi::TDB_LOG_WARN => LogLevel::Warn,
+                ffi::TDB_LOG_ERROR => LogLevel::Error,
+                ffi::TDB_LOG_FATAL => LogLevel::Fatal,
+                ffi::TDB_LOG_NONE => LogLevel::None,
+                _ => LogLevel::Info,
+            },
+            block_cache_size: c.block_cache_size,
+            max_open_sstables: c.max_open_sstables,
+            max_memory_usage: c.max_memory_usage,
+            log_to_file: c.log_to_file != 0,
+            log_truncation_at: c.log_truncation_at,
+            unified_memtable: c.unified_memtable != 0,
+            unified_memtable_write_buffer_size: c.unified_memtable_write_buffer_size,
+            unified_memtable_skip_list_max_level: c.unified_memtable_skip_list_max_level,
+            unified_memtable_skip_list_probability: c.unified_memtable_skip_list_probability,
+            unified_memtable_sync_mode: match c.unified_memtable_sync_mode {
+                ffi::TDB_SYNC_FULL => SyncMode::Full,
+                ffi::TDB_SYNC_INTERVAL => SyncMode::Interval,
+                _ => SyncMode::None,
+            },
+            unified_memtable_sync_interval_us: c.unified_memtable_sync_interval_us,
             object_store_fs_path: None,
             object_store_config: None,
+            max_concurrent_flushes: c.max_concurrent_flushes,
         }
     }
 }
@@ -587,6 +605,12 @@ pub struct ColumnFamilyConfig {
     pub l1_file_count_trigger: i32,
     /// L0 queue stall threshold
     pub l0_queue_stall_threshold: i32,
+    /// Per-SSTable tombstone density (`tombstone_count / num_entries`) above which compaction
+    /// priority escalates. Range `[0.0, 1.0]`; `0.0` disables the check.
+    pub tombstone_density_trigger: f64,
+    /// SSTables with fewer entries than this are ignored by the density trigger
+    /// (prevents tiny-sstable noise). `0` falls back to the library default.
+    pub tombstone_density_min_entries: u64,
     /// Use B+tree format for klog (default: false = block-based)
     pub use_btree: bool,
     /// Compact less aggressively in object store mode (default: false)
@@ -721,6 +745,20 @@ impl ColumnFamilyConfig {
         self
     }
 
+    /// Set the per-SSTable tombstone density above which compaction priority escalates.
+    /// Range `[0.0, 1.0]`; `0.0` disables the check.
+    pub fn tombstone_density_trigger(mut self, ratio: f64) -> Self {
+        self.tombstone_density_trigger = ratio;
+        self
+    }
+
+    /// Set the minimum entry count for an SSTable to be considered by the tombstone
+    /// density trigger. SSTables with fewer entries are skipped.
+    pub fn tombstone_density_min_entries(mut self, n: u64) -> Self {
+        self.tombstone_density_min_entries = n;
+        self
+    }
+
     /// Enable or disable B+tree format for klog.
     /// When enabled, uses B+tree structure instead of block-based format.
     pub fn use_btree(mut self, enable: bool) -> Self {
@@ -784,6 +822,18 @@ impl ColumnFamilyConfig {
         check_result(result, "failed to save config to INI")
     }
 
+    /// Create a ColumnFamilyConfig by reading from a C config struct pointer.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must point to a valid `tidesdb_column_family_config_t`. This is
+    /// crate-internal; callers (e.g., the stats readback) are expected to
+    /// validate the pointer before invoking.
+    pub(crate) fn from_c_config_ptr(ptr: *const ffi::tidesdb_column_family_config_t) -> Self {
+        let c_config = unsafe { &*ptr };
+        Self::from_c_config(c_config)
+    }
+
     /// Create a ColumnFamilyConfig from a C config struct.
     fn from_c_config(c_config: &ffi::tidesdb_column_family_config_t) -> Self {
         let mut comparator_name = String::new();
@@ -834,6 +884,8 @@ impl ColumnFamilyConfig {
             min_disk_space: c_config.min_disk_space,
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
+            tombstone_density_trigger: c_config.tombstone_density_trigger,
+            tombstone_density_min_entries: c_config.tombstone_density_min_entries,
             use_btree: c_config.use_btree != 0,
             object_lazy_compaction: c_config.object_lazy_compaction != 0,
             object_prefetch_compaction: c_config.object_prefetch_compaction != 0,
@@ -867,6 +919,8 @@ impl ColumnFamilyConfig {
             min_disk_space: self.min_disk_space,
             l1_file_count_trigger: self.l1_file_count_trigger,
             l0_queue_stall_threshold: self.l0_queue_stall_threshold,
+            tombstone_density_trigger: self.tombstone_density_trigger,
+            tombstone_density_min_entries: self.tombstone_density_min_entries,
             use_btree: if self.use_btree { 1 } else { 0 },
             commit_hook_fn: None,
             commit_hook_ctx: std::ptr::null_mut(),
@@ -941,6 +995,8 @@ impl Default for ColumnFamilyConfig {
             min_disk_space: c_config.min_disk_space,
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
+            tombstone_density_trigger: c_config.tombstone_density_trigger,
+            tombstone_density_min_entries: c_config.tombstone_density_min_entries,
             use_btree: c_config.use_btree != 0,
             object_lazy_compaction: c_config.object_lazy_compaction != 0,
             object_prefetch_compaction: c_config.object_prefetch_compaction != 0,

@@ -6,19 +6,29 @@
 use std::path::PathBuf;
 
 /// Derives the tidesdb version from enabled `v*` Cargo features.
-/// Feature `v9_0_5` maps to version `9.0.5`.
+/// Feature `v9_0_5` maps to version `9.0.5`. When multiple version features
+/// are enabled (e.g. via dependency unification), the highest is selected.
 fn selected_version() -> String {
-    let mut selected: Option<String> = None;
+    let mut selected: Option<(u32, u32, u32)> = None;
     for (key, _) in std::env::vars() {
         if let Some(feature) = key.strip_prefix("CARGO_FEATURE_V") {
-            let version = feature.to_lowercase().replace('_', ".");
-            if selected.is_some() {
-                panic!("Multiple tidesdb version features enabled. Select exactly one.");
+            let parts: Vec<u32> = feature
+                .split('_')
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            if let [a, b, c] = parts.as_slice() {
+                let v = (*a, *b, *c);
+                selected = Some(match selected {
+                    Some(prev) if prev >= v => prev,
+                    _ => v,
+                });
             }
-            selected = Some(version);
         }
     }
-    selected.unwrap_or_else(|| "9.1.0".to_string())
+    match selected {
+        Some((a, b, c)) => format!("{a}.{b}.{c}"),
+        None => "9.2.0".to_string(),
+    }
 }
 
 fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {

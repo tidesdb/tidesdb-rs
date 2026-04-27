@@ -1670,7 +1670,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "v9_1_0")]
+    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
     #[test]
     fn test_transaction_single_delete() {
         let (db, _temp_dir) = create_test_db();
@@ -1706,7 +1706,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "v9_1_0")]
+    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
     #[test]
     fn test_transaction_single_delete_in_batch() {
         let (db, _temp_dir) = create_test_db();
@@ -1742,5 +1742,140 @@ mod tests {
             assert_eq!(txn.get(&cf, b"k2").unwrap(), b"v2");
             assert_eq!(txn.get(&cf, b"k_new").unwrap(), b"v_new");
         }
+    }
+
+    #[test]
+    fn test_tombstone_cf_config_roundtrip() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::new()
+            .tombstone_density_trigger(0.5)
+            .tombstone_density_min_entries(256);
+
+        db.create_column_family("ts_cf", cf_config).unwrap();
+        let cf = db.get_column_family("ts_cf").unwrap();
+
+        let stats = cf.get_stats().unwrap();
+        let cfg = stats.config.expect("stats should expose CF config");
+        assert_eq!(cfg.tombstone_density_trigger, 0.5);
+        assert_eq!(cfg.tombstone_density_min_entries, 256);
+
+        // Library defaults should be sensible (min_entries ~1024).
+        let defaults = ColumnFamilyConfig::default();
+        assert!(
+            defaults.tombstone_density_min_entries > 0,
+            "default min_entries should be sourced from C library"
+        );
+    }
+
+    #[test]
+    fn test_tombstone_stats_populated_after_deletes() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("ts_stats_cf", cf_config).unwrap();
+        let cf = db.get_column_family("ts_stats_cf").unwrap();
+
+        const N: usize = 200;
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..N {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+        cf.flush_memtable().unwrap();
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..(N / 2) {
+                let key = format!("key{:04}", i);
+                txn.delete(&cf, key.as_bytes()).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+        cf.flush_memtable().unwrap();
+
+        // Give the flush a moment to land on disk.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let stats = cf.get_stats().unwrap();
+        assert!(stats.total_tombstones > 0, "expected tombstones after deletes");
+        assert!(stats.tombstone_ratio >= 0.0 && stats.tombstone_ratio <= 1.0);
+        assert!(stats.max_sst_density >= 0.0 && stats.max_sst_density <= 1.0);
+        assert_eq!(
+            stats.level_tombstone_counts.len(),
+            stats.num_levels as usize
+        );
+    }
+
+    #[test]
+    fn test_compact_range_basic() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("range_cf", cf_config).unwrap();
+        let cf = db.get_column_family("range_cf").unwrap();
+
+        // Multiple flushed batches to create several SSTables.
+        for batch in 0..3 {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..50 {
+                let key = format!("key{:02}{:04}", batch, i);
+                let value = format!("v{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+            cf.flush_memtable().unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Narrow range over batch 1 only.
+        cf.compact_range(Some(b"key010000"), Some(b"key019999")).unwrap();
+
+        // Both endpoints unbounded should be rejected.
+        let err = cf.compact_range(None, None).unwrap_err();
+        assert!(matches!(err, Error::TidesDB { code: ErrorCode::InvalidArgs, .. }));
+
+        // Empty slices should also be treated as unbounded -> rejected.
+        let err = cf.compact_range(Some(&[]), Some(&[])).unwrap_err();
+        assert!(matches!(err, Error::TidesDB { code: ErrorCode::InvalidArgs, .. }));
+
+        // A key outside the compacted range remains readable and unchanged.
+        let txn = db.begin_transaction().unwrap();
+        let val = txn.get(&cf, b"key020000").unwrap();
+        assert_eq!(val, b"v0");
+    }
+
+    #[test]
+    fn test_max_concurrent_flushes() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = Config::new(temp_dir.path()).max_concurrent_flushes(1);
+        assert_eq!(config.max_concurrent_flushes, 1);
+
+        let db = TidesDB::open(config).unwrap();
+        db.create_column_family("test_cf", ColumnFamilyConfig::default())
+            .unwrap();
+        let cf = db.get_column_family("test_cf").unwrap();
+
+        let mut txn = db.begin_transaction().unwrap();
+        txn.put(&cf, b"k", b"v", -1).unwrap();
+        txn.commit().unwrap();
+        cf.flush_memtable().unwrap();
+
+        let txn = db.begin_transaction().unwrap();
+        assert_eq!(txn.get(&cf, b"k").unwrap(), b"v");
+    }
+
+    #[test]
+    fn test_default_config_sources_max_concurrent_flushes() {
+        let cfg = Config::default();
+        assert!(
+            cfg.max_concurrent_flushes != 0,
+            "default_config().max_concurrent_flushes should be sourced from tidesdb_default_config()"
+        );
     }
 }
