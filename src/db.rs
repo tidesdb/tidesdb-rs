@@ -703,6 +703,13 @@ impl ColumnFamily {
                 }
             }
 
+            let mut level_tombstone_counts = Vec::new();
+            if num_levels > 0 && !(*c_stats).level_tombstone_counts.is_null() {
+                for i in 0..num_levels as isize {
+                    level_tombstone_counts.push(*(*c_stats).level_tombstone_counts.offset(i));
+                }
+            }
+
             let total_keys = (*c_stats).total_keys;
             let total_data_size = (*c_stats).total_data_size;
             let avg_key_size = (*c_stats).avg_key_size;
@@ -713,6 +720,16 @@ impl ColumnFamily {
             let btree_total_nodes = (*c_stats).btree_total_nodes;
             let btree_max_height = (*c_stats).btree_max_height;
             let btree_avg_height = (*c_stats).btree_avg_height;
+            let total_tombstones = (*c_stats).total_tombstones;
+            let tombstone_ratio = (*c_stats).tombstone_ratio;
+            let max_sst_density = (*c_stats).max_sst_density;
+            let max_sst_density_level = (*c_stats).max_sst_density_level;
+
+            let config = if (*c_stats).config.is_null() {
+                None
+            } else {
+                Some(ColumnFamilyConfig::from_c_config_ptr((*c_stats).config))
+            };
 
             ffi::tidesdb_free_stats(c_stats);
 
@@ -721,7 +738,7 @@ impl ColumnFamily {
                 memtable_size,
                 level_sizes,
                 level_num_sstables,
-                config: None,
+                config,
                 total_keys,
                 total_data_size,
                 avg_key_size,
@@ -733,6 +750,11 @@ impl ColumnFamily {
                 btree_total_nodes,
                 btree_max_height,
                 btree_avg_height,
+                total_tombstones,
+                tombstone_ratio,
+                level_tombstone_counts,
+                max_sst_density,
+                max_sst_density_level,
             }
         };
 
@@ -743,6 +765,44 @@ impl ColumnFamily {
     pub fn compact(&self) -> Result<()> {
         let result = unsafe { ffi::tidesdb_compact(self.cf) };
         check_result(result, "failed to compact column family")
+    }
+
+    /// Synchronously compacts every SSTable whose key range overlaps `[start_key, end_key)`.
+    ///
+    /// Blocks the calling thread until the merge commits or fails (it does not enqueue
+    /// onto the compaction thread pool). `None` means unbounded on that side; passing
+    /// `None` for both endpoints is rejected -- use [`compact`](Self::compact) for full
+    /// column-family compaction.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_key` - Inclusive start of the range, or `None` for unbounded
+    /// * `end_key` - Exclusive end of the range, or `None` for unbounded
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, or an error: `InvalidArgs` if both endpoints are `None`,
+    /// `Locked` if another compaction is already running, or standard I/O / memory errors.
+    pub fn compact_range(
+        &self,
+        start_key: Option<&[u8]>,
+        end_key: Option<&[u8]>,
+    ) -> Result<()> {
+        // Empty slices are treated as unbounded (NULL) to avoid passing a
+        // dangling pointer-of-element-zero deref to C.
+        let (start_ptr, start_len) = match start_key {
+            Some(s) if !s.is_empty() => (s.as_ptr(), s.len()),
+            _ => (std::ptr::null(), 0),
+        };
+        let (end_ptr, end_len) = match end_key {
+            Some(s) if !s.is_empty() => (s.as_ptr(), s.len()),
+            _ => (std::ptr::null(), 0),
+        };
+
+        let result = unsafe {
+            ffi::tidesdb_compact_range(self.cf, start_ptr, start_len, end_ptr, end_len)
+        };
+        check_result(result, "failed to compact range")
     }
 
     /// Manually triggers memtable flush for this column family.

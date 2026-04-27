@@ -150,6 +150,7 @@ pub struct tidesdb_config_t {
     pub unified_memtable_sync_interval_us: u64,
     pub object_store: *mut tidesdb_objstore_t,
     pub object_store_config: *mut tidesdb_objstore_config_t,
+    pub max_concurrent_flushes: c_int,
 }
 
 /// Commit operation passed to commit hook callback
@@ -201,6 +202,8 @@ pub struct tidesdb_column_family_config_t {
     pub min_disk_space: u64,
     pub l1_file_count_trigger: c_int,
     pub l0_queue_stall_threshold: c_int,
+    pub tombstone_density_trigger: c_double,
+    pub tombstone_density_min_entries: u64,
     pub use_btree: c_int,
     pub commit_hook_fn: tidesdb_commit_hook_fn,
     pub commit_hook_ctx: *mut c_void,
@@ -229,6 +232,11 @@ pub struct tidesdb_stats_t {
     pub btree_total_nodes: u64,
     pub btree_max_height: u32,
     pub btree_avg_height: c_double,
+    pub total_tombstones: u64,
+    pub tombstone_ratio: c_double,
+    pub level_tombstone_counts: *mut u64,
+    pub max_sst_density: c_double,
+    pub max_sst_density_level: c_int,
 }
 
 /// Database-level aggregate statistics
@@ -331,6 +339,13 @@ unsafe extern "C" {
 
     // Maintenance
     pub fn tidesdb_compact(cf: *mut tidesdb_column_family_t) -> c_int;
+    pub fn tidesdb_compact_range(
+        cf: *mut tidesdb_column_family_t,
+        start_key: *const u8,
+        start_key_size: size_t,
+        end_key: *const u8,
+        end_key_size: size_t,
+    ) -> c_int;
     pub fn tidesdb_flush_memtable(cf: *mut tidesdb_column_family_t) -> c_int;
 
     // Comparator
@@ -372,7 +387,7 @@ unsafe extern "C" {
         key: *const u8,
         key_len: size_t,
     ) -> c_int;
-    #[cfg(feature = "v9_1_0")]
+    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
     pub fn tidesdb_txn_single_delete(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,

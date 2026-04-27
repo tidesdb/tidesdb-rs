@@ -172,7 +172,7 @@ impl Transaction {
     ///
     /// * `cf` - The column family
     /// * `key` - The key
-    #[cfg(feature = "v9_1_0")]
+    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
     pub fn single_delete(&self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
         let key_ptr = if key.is_empty() {
             ptr::null()
