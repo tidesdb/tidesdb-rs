@@ -96,11 +96,11 @@ pub use config::{
     ColumnFamilyConfig, CompressionAlgorithm, Config, IsolationLevel, LogLevel, ObjectStoreConfig,
     SyncMode,
 };
-pub use db::{finalize, free, init, init_with_allocator, ColumnFamily, CommitOp, TidesDB};
-pub use ffi::{
-    tidesdb_calloc_fn, tidesdb_free_fn, tidesdb_malloc_fn, tidesdb_realloc_fn,
-};
+#[cfg(tidesdb_has_raise_open_file_limit)]
+pub use db::raise_open_file_limit;
+pub use db::{ColumnFamily, CommitOp, TidesDB, finalize, free, init, init_with_allocator};
 pub use error::{Error, ErrorCode, Result};
+pub use ffi::{tidesdb_calloc_fn, tidesdb_free_fn, tidesdb_malloc_fn, tidesdb_realloc_fn};
 pub use iterator::Iterator;
 pub use stats::{CacheStats, DbStats, Stats};
 pub use transaction::Transaction;
@@ -251,7 +251,8 @@ mod tests {
 
         {
             let mut txn = db.begin_transaction().unwrap();
-            txn.put(&cf, b"rollback_key", b"rollback_value", -1).unwrap();
+            txn.put(&cf, b"rollback_key", b"rollback_value", -1)
+                .unwrap();
             txn.rollback().unwrap();
         }
 
@@ -666,10 +667,10 @@ mod tests {
         let (db, _temp_dir) = create_test_db();
 
         // Create column family with B+tree format
-        let cf_config = ColumnFamilyConfig::new()
-            .use_btree(true);
+        let cf_config = ColumnFamilyConfig::new().use_btree(true);
 
-        db.create_column_family("btree_stats_cf", cf_config).unwrap();
+        db.create_column_family("btree_stats_cf", cf_config)
+            .unwrap();
         let cf = db.get_column_family("btree_stats_cf").unwrap();
 
         // Insert some data
@@ -813,7 +814,9 @@ mod tests {
         let cf = db.get_column_family("test_cf").unwrap();
 
         // Begin with ReadCommitted
-        let mut txn = db.begin_transaction_with_isolation(IsolationLevel::ReadCommitted).unwrap();
+        let mut txn = db
+            .begin_transaction_with_isolation(IsolationLevel::ReadCommitted)
+            .unwrap();
         txn.put(&cf, b"key1", b"value1", -1).unwrap();
         txn.commit().unwrap();
 
@@ -1206,8 +1209,7 @@ mod tests {
 
     #[test]
     fn test_max_memory_usage_config() {
-        let config = Config::new("./test_mem")
-            .max_memory_usage(512 * 1024 * 1024); // 512MB
+        let config = Config::new("./test_mem").max_memory_usage(512 * 1024 * 1024); // 512MB
         assert_eq!(config.max_memory_usage, 512 * 1024 * 1024);
 
         // Default should be 0 (auto)
@@ -1258,8 +1260,7 @@ mod tests {
         assert!(db.has_comparator("test_reverse"));
 
         // Create a column family using this comparator
-        let cf_config = ColumnFamilyConfig::new()
-            .comparator_name("test_reverse");
+        let cf_config = ColumnFamilyConfig::new().comparator_name("test_reverse");
         db.create_column_family("reverse_cf", cf_config).unwrap();
 
         let cf = db.get_column_family("reverse_cf").unwrap();
@@ -1310,13 +1311,11 @@ mod tests {
         let (db, _temp_dir) = create_test_db();
 
         // Create block-based column family (default)
-        let block_config = ColumnFamilyConfig::new()
-            .use_btree(false);
+        let block_config = ColumnFamilyConfig::new().use_btree(false);
         db.create_column_family("block_cf", block_config).unwrap();
 
         // Create B+tree column family
-        let btree_config = ColumnFamilyConfig::new()
-            .use_btree(true);
+        let btree_config = ColumnFamilyConfig::new().use_btree(true);
         db.create_column_family("btree_cf", btree_config).unwrap();
 
         // Verify both can be used
@@ -1408,8 +1407,7 @@ mod tests {
     fn test_sync_wal() {
         let (db, _temp_dir) = create_test_db();
 
-        let cf_config = ColumnFamilyConfig::new()
-            .sync_mode(SyncMode::None);
+        let cf_config = ColumnFamilyConfig::new().sync_mode(SyncMode::None);
         db.create_column_family("test_cf", cf_config).unwrap();
         let cf = db.get_column_family("test_cf").unwrap();
 
@@ -1537,7 +1535,8 @@ mod tests {
         assert_eq!(config.unified_memtable_skip_list_max_level, 16);
 
         let db = TidesDB::open(config).unwrap();
-        db.create_column_family("test_cf", ColumnFamilyConfig::default()).unwrap();
+        db.create_column_family("test_cf", ColumnFamilyConfig::default())
+            .unwrap();
         let cf = db.get_column_family("test_cf").unwrap();
 
         // Insert and read data to verify unified memtable works
@@ -1638,7 +1637,8 @@ mod tests {
             .unified_memtable(true);
 
         let db = TidesDB::open(config).unwrap();
-        db.create_column_family("test_cf", ColumnFamilyConfig::default()).unwrap();
+        db.create_column_family("test_cf", ColumnFamilyConfig::default())
+            .unwrap();
 
         let stats = db.get_db_stats().unwrap();
         assert!(stats.unified_memtable_enabled);
@@ -1670,7 +1670,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
+    #[cfg(tidesdb_has_txn_single_delete)]
     #[test]
     fn test_transaction_single_delete() {
         let (db, _temp_dir) = create_test_db();
@@ -1706,7 +1706,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
+    #[cfg(tidesdb_has_txn_single_delete)]
     #[test]
     fn test_transaction_single_delete_in_batch() {
         let (db, _temp_dir) = create_test_db();
@@ -1744,6 +1744,7 @@ mod tests {
         }
     }
 
+    #[cfg(tidesdb_has_tombstone_stats)]
     #[test]
     fn test_tombstone_cf_config_roundtrip() {
         let (db, _temp_dir) = create_test_db();
@@ -1768,6 +1769,7 @@ mod tests {
         );
     }
 
+    #[cfg(tidesdb_has_tombstone_stats)]
     #[test]
     fn test_tombstone_stats_populated_after_deletes() {
         let (db, _temp_dir) = create_test_db();
@@ -1799,11 +1801,19 @@ mod tests {
         }
         cf.flush_memtable().unwrap();
 
-        // Give the flush a moment to land on disk.
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        let mut stats = cf.get_stats().unwrap();
+        for _ in 0..10 {
+            if stats.total_tombstones > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            stats = cf.get_stats().unwrap();
+        }
 
-        let stats = cf.get_stats().unwrap();
-        assert!(stats.total_tombstones > 0, "expected tombstones after deletes");
+        assert!(
+            stats.total_tombstones > 0,
+            "expected tombstones after deletes"
+        );
         assert!(stats.tombstone_ratio >= 0.0 && stats.tombstone_ratio <= 1.0);
         assert!(stats.max_sst_density >= 0.0 && stats.max_sst_density <= 1.0);
         assert_eq!(
@@ -1812,6 +1822,7 @@ mod tests {
         );
     }
 
+    #[cfg(tidesdb_has_compact_range)]
     #[test]
     fn test_compact_range_basic() {
         let (db, _temp_dir) = create_test_db();
@@ -1834,15 +1845,28 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         // Narrow range over batch 1 only.
-        cf.compact_range(Some(b"key010000"), Some(b"key019999")).unwrap();
+        cf.compact_range(Some(b"key010000"), Some(b"key019999"))
+            .unwrap();
 
         // Both endpoints unbounded should be rejected.
         let err = cf.compact_range(None, None).unwrap_err();
-        assert!(matches!(err, Error::TidesDB { code: ErrorCode::InvalidArgs, .. }));
+        assert!(matches!(
+            err,
+            Error::TidesDB {
+                code: ErrorCode::InvalidArgs,
+                ..
+            }
+        ));
 
         // Empty slices should also be treated as unbounded -> rejected.
         let err = cf.compact_range(Some(&[]), Some(&[])).unwrap_err();
-        assert!(matches!(err, Error::TidesDB { code: ErrorCode::InvalidArgs, .. }));
+        assert!(matches!(
+            err,
+            Error::TidesDB {
+                code: ErrorCode::InvalidArgs,
+                ..
+            }
+        ));
 
         // A key outside the compacted range remains readable and unchanged.
         let txn = db.begin_transaction().unwrap();
@@ -1850,6 +1874,25 @@ mod tests {
         assert_eq!(val, b"v0");
     }
 
+    #[cfg(tidesdb_has_cancel_background_work)]
+    #[test]
+    fn test_cancel_background_work() {
+        let (db, _temp_dir) = create_test_db();
+        db.cancel_background_work().unwrap();
+    }
+
+    #[cfg(tidesdb_has_raise_open_file_limit)]
+    #[test]
+    fn test_raise_open_file_limit_raises_or_preserves_ceiling() {
+        let current = raise_open_file_limit(0);
+        assert!(current > 0);
+
+        let requested = current.saturating_add(1);
+        let raised = raise_open_file_limit(requested);
+        assert!(raised >= current);
+    }
+
+    #[cfg(tidesdb_has_max_concurrent_flushes)]
     #[test]
     fn test_max_concurrent_flushes() {
         let temp_dir = TempDir::new().unwrap();
@@ -1873,9 +1916,10 @@ mod tests {
     #[test]
     fn test_default_config_sources_max_concurrent_flushes() {
         let cfg = Config::default();
-        assert!(
-            cfg.max_concurrent_flushes != 0,
-            "default_config().max_concurrent_flushes should be sourced from tidesdb_default_config()"
-        );
+        let c = unsafe { ffi::tidesdb_default_config() };
+        #[cfg(tidesdb_has_max_concurrent_flushes)]
+        assert_eq!(cfg.max_concurrent_flushes, c.max_concurrent_flushes);
+        #[cfg(not(tidesdb_has_max_concurrent_flushes))]
+        assert_eq!(cfg.max_concurrent_flushes, 0);
     }
 }

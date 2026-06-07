@@ -12,10 +12,7 @@ fn selected_version() -> String {
     let mut selected: Option<(u32, u32, u32)> = None;
     for (key, _) in std::env::vars() {
         if let Some(feature) = key.strip_prefix("CARGO_FEATURE_V") {
-            let parts: Vec<u32> = feature
-                .split('_')
-                .filter_map(|s| s.parse().ok())
-                .collect();
+            let parts: Vec<u32> = feature.split('_').filter_map(|s| s.parse().ok()).collect();
             if let [a, b, c] = parts.as_slice() {
                 let v = (*a, *b, *c);
                 selected = Some(match selected {
@@ -31,10 +28,20 @@ fn selected_version() -> String {
     }
 }
 
+fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
+    let parts: Vec<u32> = version.split('.').filter_map(|s| s.parse().ok()).collect();
+    match parts.as_slice() {
+        [a, b, c] => Some((*a, *b, *c)),
+        _ => None,
+    }
+}
+
+fn version_at_least(version: &str, major: u32, minor: u32, patch: u32) -> bool {
+    parse_version(version).is_some_and(|v| v >= (major, minor, patch))
+}
+
 fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
-    let url = format!(
-        "https://github.com/tidesdb/tidesdb/archive/refs/tags/v{version}.tar.gz"
-    );
+    let url = format!("https://github.com/tidesdb/tidesdb/archive/refs/tags/v{version}.tar.gz");
     let tarball_path = PathBuf::from(out_dir).join(format!("tidesdb-{version}.tar.gz"));
     let extract_dir = PathBuf::from(out_dir).join("tidesdb-source");
 
@@ -45,13 +52,11 @@ fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
     }
 
     // Download
-    let resp = ureq::get(&url).call().unwrap_or_else(|e| {
-        panic!("Failed to download tidesdb v{version} from {url}: {e}")
-    });
-    let mut tarball = std::fs::File::create(&tarball_path)
-        .expect("Failed to create tarball file");
-    std::io::copy(&mut resp.into_reader(), &mut tarball)
-        .expect("Failed to write tarball");
+    let resp = ureq::get(&url)
+        .call()
+        .unwrap_or_else(|e| panic!("Failed to download tidesdb v{version} from {url}: {e}"));
+    let mut tarball = std::fs::File::create(&tarball_path).expect("Failed to create tarball file");
+    std::io::copy(&mut resp.into_reader(), &mut tarball).expect("Failed to write tarball");
 
     // Extract
     let tarball = std::fs::File::open(&tarball_path).expect("Failed to open tarball");
@@ -98,15 +103,41 @@ fn brew_prefix() -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn version_less_than(version: &str, major: u32, minor: u32, patch: u32) -> bool {
-    let parts: Vec<u32> = version.split('.').filter_map(|s| s.parse().ok()).collect();
-    match parts.as_slice() {
-        [a, b, c] => (*a, *b, *c) < (major, minor, patch),
-        _ => false,
-    }
+    !version_at_least(version, major, minor, patch)
 }
 
 fn main() {
     let version = selected_version();
+
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_txn_single_delete)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_compact_range)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_max_concurrent_flushes)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_tombstone_stats)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_cancel_background_work)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_raise_open_file_limit)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_write_amp_stats)");
+
+    // These gates follow C API/ABI boundaries found while testing the version
+    // matrix. Keeping them derived from the selected C tag avoids long feature
+    // lists and prevents Rust FFI structs from reading fields older tags do not
+    // expose.
+    if version_at_least(&version, 9, 1, 0) {
+        println!("cargo:rustc-cfg=tidesdb_has_txn_single_delete");
+    }
+    if version_at_least(&version, 9, 2, 0) {
+        println!("cargo:rustc-cfg=tidesdb_has_compact_range");
+        println!("cargo:rustc-cfg=tidesdb_has_max_concurrent_flushes");
+        println!("cargo:rustc-cfg=tidesdb_has_tombstone_stats");
+    }
+    if version_at_least(&version, 9, 3, 2) {
+        println!("cargo:rustc-cfg=tidesdb_has_cancel_background_work");
+    }
+    if version_at_least(&version, 9, 3, 3) {
+        println!("cargo:rustc-cfg=tidesdb_has_raise_open_file_limit");
+    }
+    if version_at_least(&version, 9, 3, 4) {
+        println!("cargo:rustc-cfg=tidesdb_has_write_amp_stats");
+    }
 
     // tidesdb S3 connector uses POSIX-only functions (gmtime_r, fmemopen)
     // that were not available on Windows until v9.0.6

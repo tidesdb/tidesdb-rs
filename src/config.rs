@@ -5,7 +5,7 @@
 
 //! Configuration types for TidesDB.
 
-use crate::error::{check_result, Result};
+use crate::error::{Result, check_result};
 use crate::ffi;
 use std::ffi::CString;
 use std::path::Path;
@@ -323,8 +323,8 @@ pub struct Config {
     /// Object store behavior configuration (None = use defaults when object store is set)
     pub object_store_config: Option<ObjectStoreConfig>,
     /// Global semaphore on the number of in-flight memtable flushes across all column
-    /// families. Bounds peak transient memory and work-queue depth. `0` falls back to
-    /// the library default (`TDB_DEFAULT_MAX_CONCURRENT_FLUSHES`, currently 4).
+    /// families. Bounds peak transient memory and work-queue depth where supported.
+    /// `0` uses the C library's version-specific default behavior.
     pub max_concurrent_flushes: i32,
 }
 
@@ -510,6 +510,7 @@ impl Config {
             unified_memtable_sync_interval_us: self.unified_memtable_sync_interval_us,
             object_store: objstore_ptr,
             object_store_config: os_config_ptr,
+            #[cfg(tidesdb_has_max_concurrent_flushes)]
             max_concurrent_flushes: self.max_concurrent_flushes,
         };
 
@@ -557,7 +558,16 @@ impl Default for Config {
             unified_memtable_sync_interval_us: c.unified_memtable_sync_interval_us,
             object_store_fs_path: None,
             object_store_config: None,
-            max_concurrent_flushes: c.max_concurrent_flushes,
+            max_concurrent_flushes: {
+                #[cfg(tidesdb_has_max_concurrent_flushes)]
+                {
+                    c.max_concurrent_flushes
+                }
+                #[cfg(not(tidesdb_has_max_concurrent_flushes))]
+                {
+                    0
+                }
+            },
         }
     }
 }
@@ -884,8 +894,26 @@ impl ColumnFamilyConfig {
             min_disk_space: c_config.min_disk_space,
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
-            tombstone_density_trigger: c_config.tombstone_density_trigger,
-            tombstone_density_min_entries: c_config.tombstone_density_min_entries,
+            tombstone_density_trigger: {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    c_config.tombstone_density_trigger
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0.0
+                }
+            },
+            tombstone_density_min_entries: {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    c_config.tombstone_density_min_entries
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0
+                }
+            },
             use_btree: c_config.use_btree != 0,
             object_lazy_compaction: c_config.object_lazy_compaction != 0,
             object_prefetch_compaction: c_config.object_prefetch_compaction != 0,
@@ -919,14 +947,20 @@ impl ColumnFamilyConfig {
             min_disk_space: self.min_disk_space,
             l1_file_count_trigger: self.l1_file_count_trigger,
             l0_queue_stall_threshold: self.l0_queue_stall_threshold,
+            #[cfg(tidesdb_has_tombstone_stats)]
             tombstone_density_trigger: self.tombstone_density_trigger,
+            #[cfg(tidesdb_has_tombstone_stats)]
             tombstone_density_min_entries: self.tombstone_density_min_entries,
             use_btree: if self.use_btree { 1 } else { 0 },
             commit_hook_fn: None,
             commit_hook_ctx: std::ptr::null_mut(),
             object_target_file_size: 0,
             object_lazy_compaction: if self.object_lazy_compaction { 1 } else { 0 },
-            object_prefetch_compaction: if self.object_prefetch_compaction { 1 } else { 0 },
+            object_prefetch_compaction: if self.object_prefetch_compaction {
+                1
+            } else {
+                0
+            },
         };
 
         // Copy comparator name
@@ -995,8 +1029,26 @@ impl Default for ColumnFamilyConfig {
             min_disk_space: c_config.min_disk_space,
             l1_file_count_trigger: c_config.l1_file_count_trigger,
             l0_queue_stall_threshold: c_config.l0_queue_stall_threshold,
-            tombstone_density_trigger: c_config.tombstone_density_trigger,
-            tombstone_density_min_entries: c_config.tombstone_density_min_entries,
+            tombstone_density_trigger: {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    c_config.tombstone_density_trigger
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0.0
+                }
+            },
+            tombstone_density_min_entries: {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    c_config.tombstone_density_min_entries
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0
+                }
+            },
             use_btree: c_config.use_btree != 0,
             object_lazy_compaction: c_config.object_lazy_compaction != 0,
             object_prefetch_compaction: c_config.object_prefetch_compaction != 0,

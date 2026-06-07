@@ -111,9 +111,11 @@ pub struct tidesdb_objstore_config_t {
 #[allow(non_camel_case_types)]
 pub type tidesdb_malloc_fn = Option<unsafe extern "C" fn(size: size_t) -> *mut c_void>;
 #[allow(non_camel_case_types)]
-pub type tidesdb_calloc_fn = Option<unsafe extern "C" fn(nmemb: size_t, size: size_t) -> *mut c_void>;
+pub type tidesdb_calloc_fn =
+    Option<unsafe extern "C" fn(nmemb: size_t, size: size_t) -> *mut c_void>;
 #[allow(non_camel_case_types)]
-pub type tidesdb_realloc_fn = Option<unsafe extern "C" fn(ptr: *mut c_void, size: size_t) -> *mut c_void>;
+pub type tidesdb_realloc_fn =
+    Option<unsafe extern "C" fn(ptr: *mut c_void, size: size_t) -> *mut c_void>;
 #[allow(non_camel_case_types)]
 pub type tidesdb_free_fn = Option<unsafe extern "C" fn(ptr: *mut c_void)>;
 
@@ -128,7 +130,6 @@ pub type tidesdb_comparator_fn = Option<
         ctx: *mut c_void,
     ) -> c_int,
 >;
-
 
 /// Database configuration
 #[repr(C)]
@@ -150,6 +151,8 @@ pub struct tidesdb_config_t {
     pub unified_memtable_sync_interval_us: u64,
     pub object_store: *mut tidesdb_objstore_t,
     pub object_store_config: *mut tidesdb_objstore_config_t,
+    // Added in TidesDB 9.2.0. Older 9.0.x/9.1.x tags have a shorter C struct.
+    #[cfg(tidesdb_has_max_concurrent_flushes)]
     pub max_concurrent_flushes: c_int,
 }
 
@@ -202,7 +205,10 @@ pub struct tidesdb_column_family_config_t {
     pub min_disk_space: u64,
     pub l1_file_count_trigger: c_int,
     pub l0_queue_stall_threshold: c_int,
+    // Added in TidesDB 9.2.0 with tombstone-density compaction controls.
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub tombstone_density_trigger: c_double,
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub tombstone_density_min_entries: u64,
     pub use_btree: c_int,
     pub commit_hook_fn: tidesdb_commit_hook_fn,
@@ -232,11 +238,32 @@ pub struct tidesdb_stats_t {
     pub btree_total_nodes: u64,
     pub btree_max_height: u32,
     pub btree_avg_height: c_double,
+    // Added in TidesDB 9.2.0 with tombstone observability.
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub total_tombstones: u64,
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub tombstone_ratio: c_double,
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub level_tombstone_counts: *mut u64,
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub max_sst_density: c_double,
+    #[cfg(tidesdb_has_tombstone_stats)]
     pub max_sst_density_level: c_int,
+    // Added in TidesDB 9.3.4 with write-amplification observability.
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub wal_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub flush_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub compaction_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub compaction_bytes_read: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub user_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub flush_count: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub compaction_count: u64,
 }
 
 /// Database-level aggregate statistics
@@ -273,6 +300,24 @@ pub struct tidesdb_db_stats_t {
     pub total_uploads: u64,
     pub total_upload_failures: u64,
     pub replica_mode: c_int,
+    // Added in TidesDB 9.3.4. This struct is stack-allocated by Rust before
+    // passing it to C, so the tail must match C exactly to avoid overwrites.
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub uwal_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub wal_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub flush_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub compaction_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub compaction_bytes_read: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub user_bytes_written: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub flush_count: u64,
+    #[cfg(tidesdb_has_write_amp_stats)]
+    pub compaction_count: u64,
 }
 
 /// Cache statistics
@@ -332,13 +377,13 @@ unsafe extern "C" {
         stats: *mut *mut tidesdb_stats_t,
     ) -> c_int;
     pub fn tidesdb_free_stats(stats: *mut tidesdb_stats_t);
-    pub fn tidesdb_get_cache_stats(
-        db: *mut tidesdb_t,
-        stats: *mut tidesdb_cache_stats_t,
-    ) -> c_int;
+    pub fn tidesdb_get_cache_stats(db: *mut tidesdb_t, stats: *mut tidesdb_cache_stats_t) -> c_int;
 
     // Maintenance
     pub fn tidesdb_compact(cf: *mut tidesdb_column_family_t) -> c_int;
+    #[cfg(tidesdb_has_cancel_background_work)]
+    pub fn tidesdb_cancel_background_work(db: *mut tidesdb_t) -> c_int;
+    #[cfg(tidesdb_has_compact_range)]
     pub fn tidesdb_compact_range(
         cf: *mut tidesdb_column_family_t,
         start_key: *const u8,
@@ -347,6 +392,8 @@ unsafe extern "C" {
         end_key_size: size_t,
     ) -> c_int;
     pub fn tidesdb_flush_memtable(cf: *mut tidesdb_column_family_t) -> c_int;
+    #[cfg(tidesdb_has_raise_open_file_limit)]
+    pub fn tidesdb_raise_open_file_limit(desired: libc::c_long) -> libc::c_long;
 
     // Comparator
     pub fn tidesdb_register_comparator(
@@ -387,7 +434,7 @@ unsafe extern "C" {
         key: *const u8,
         key_len: size_t,
     ) -> c_int;
-    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
+    #[cfg(tidesdb_has_txn_single_delete)]
     pub fn tidesdb_txn_single_delete(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,
@@ -401,10 +448,8 @@ unsafe extern "C" {
 
     // Savepoints
     pub fn tidesdb_txn_savepoint(txn: *mut tidesdb_txn_t, name: *const c_char) -> c_int;
-    pub fn tidesdb_txn_rollback_to_savepoint(
-        txn: *mut tidesdb_txn_t,
-        name: *const c_char,
-    ) -> c_int;
+    pub fn tidesdb_txn_rollback_to_savepoint(txn: *mut tidesdb_txn_t, name: *const c_char)
+    -> c_int;
     pub fn tidesdb_txn_release_savepoint(txn: *mut tidesdb_txn_t, name: *const c_char) -> c_int;
 
     // Iterator operations
@@ -515,10 +560,7 @@ unsafe extern "C" {
     pub fn tidesdb_sync_wal(cf: *mut tidesdb_column_family_t) -> c_int;
 
     // Database-level statistics
-    pub fn tidesdb_get_db_stats(
-        db: *mut tidesdb_t,
-        stats: *mut tidesdb_db_stats_t,
-    ) -> c_int;
+    pub fn tidesdb_get_db_stats(db: *mut tidesdb_t, stats: *mut tidesdb_db_stats_t) -> c_int;
 
     // Iterator key+value combined
     pub fn tidesdb_iter_key_value(
