@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: tidesdb/tidesdb
-          ref: v9.1.0
+          ref: v9.3.5
           path: tidesdb
 
       - name: Install dependencies (Linux)

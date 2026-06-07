@@ -6,7 +6,7 @@
 //! Main database types and operations.
 
 use crate::config::{ColumnFamilyConfig, Config, IsolationLevel};
-use crate::error::{check_result, Error, Result};
+use crate::error::{Error, Result, check_result};
 use crate::ffi;
 use crate::stats::{CacheStats, DbStats};
 use crate::transaction::Transaction;
@@ -63,7 +63,6 @@ unsafe extern "C" fn comparator_trampoline(
     callback(k1, k2)
 }
 
-
 /// Initializes TidesDB with the system allocator.
 ///
 /// This must be called exactly once before any other TidesDB function
@@ -113,6 +112,16 @@ pub fn finalize() {
     unsafe {
         ffi::tidesdb_finalize();
     }
+}
+
+/// Raises or reports the process open-file ceiling.
+///
+/// Call this before opening a database when a larger `max_open_sstables` budget
+/// is needed. Passing `0` or a negative value reports the current ceiling
+/// without requesting a change.
+#[cfg(tidesdb_has_raise_open_file_limit)]
+pub fn raise_open_file_limit(desired: libc::c_long) -> libc::c_long {
+    unsafe { ffi::tidesdb_raise_open_file_limit(desired) }
 }
 
 /// Frees memory allocated by TidesDB.
@@ -233,9 +242,8 @@ impl TidesDB {
         let c_name = CString::new(name)?;
         let c_config = config.to_c_config();
 
-        let result = unsafe {
-            ffi::tidesdb_create_column_family(self.db, c_name.as_ptr(), &c_config)
-        };
+        let result =
+            unsafe { ffi::tidesdb_create_column_family(self.db, c_name.as_ptr(), &c_config) };
         check_result(result, "failed to create column family")
     }
 
@@ -336,8 +344,7 @@ impl TidesDB {
         let mut names: *mut *mut c_char = ptr::null_mut();
         let mut count: i32 = 0;
 
-        let result =
-            unsafe { ffi::tidesdb_list_column_families(self.db, &mut names, &mut count) };
+        let result = unsafe { ffi::tidesdb_list_column_families(self.db, &mut names, &mut count) };
         check_result(result, "failed to list column families")?;
 
         if count == 0 || names.is_null() {
@@ -359,6 +366,16 @@ impl TidesDB {
         }
 
         Ok(result_names)
+    }
+
+    /// Cancels background compaction work for this database.
+    ///
+    /// Flushes are unaffected, so durability is preserved. TidesDB documents
+    /// this as a fast-shutdown helper intended to be called before close.
+    #[cfg(tidesdb_has_cancel_background_work)]
+    pub fn cancel_background_work(&self) -> Result<()> {
+        let result = unsafe { ffi::tidesdb_cancel_background_work(self.db) };
+        check_result(result, "failed to cancel background work")
     }
 
     /// Begins a new transaction with the default isolation level.
@@ -394,9 +411,8 @@ impl TidesDB {
     ) -> Result<Transaction> {
         let mut txn: *mut ffi::tidesdb_txn_t = ptr::null_mut();
 
-        let result = unsafe {
-            ffi::tidesdb_txn_begin_with_isolation(self.db, isolation as i32, &mut txn)
-        };
+        let result =
+            unsafe { ffi::tidesdb_txn_begin_with_isolation(self.db, isolation as i32, &mut txn) };
         check_result(result, "failed to begin transaction with isolation")?;
 
         if txn.is_null() {
@@ -520,12 +536,7 @@ impl TidesDB {
         let mut ctx_out: *mut c_void = ptr::null_mut();
 
         let result = unsafe {
-            ffi::tidesdb_get_comparator(
-                self.db,
-                c_name.as_ptr(),
-                &mut fn_out,
-                &mut ctx_out,
-            )
+            ffi::tidesdb_get_comparator(self.db, c_name.as_ptr(), &mut fn_out, &mut ctx_out)
         };
 
         result == ffi::TDB_SUCCESS
@@ -703,12 +714,22 @@ impl ColumnFamily {
                 }
             }
 
-            let mut level_tombstone_counts = Vec::new();
-            if num_levels > 0 && !(*c_stats).level_tombstone_counts.is_null() {
-                for i in 0..num_levels as isize {
-                    level_tombstone_counts.push(*(*c_stats).level_tombstone_counts.offset(i));
+            let level_tombstone_counts = {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    let mut counts = Vec::new();
+                    if num_levels > 0 && !(*c_stats).level_tombstone_counts.is_null() {
+                        for i in 0..num_levels as isize {
+                            counts.push(*(*c_stats).level_tombstone_counts.offset(i));
+                        }
+                    }
+                    counts
                 }
-            }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    Vec::new()
+                }
+            };
 
             let total_keys = (*c_stats).total_keys;
             let total_data_size = (*c_stats).total_data_size;
@@ -720,10 +741,46 @@ impl ColumnFamily {
             let btree_total_nodes = (*c_stats).btree_total_nodes;
             let btree_max_height = (*c_stats).btree_max_height;
             let btree_avg_height = (*c_stats).btree_avg_height;
-            let total_tombstones = (*c_stats).total_tombstones;
-            let tombstone_ratio = (*c_stats).tombstone_ratio;
-            let max_sst_density = (*c_stats).max_sst_density;
-            let max_sst_density_level = (*c_stats).max_sst_density_level;
+            let total_tombstones = {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    (*c_stats).total_tombstones
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0
+                }
+            };
+            let tombstone_ratio = {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    (*c_stats).tombstone_ratio
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0.0
+                }
+            };
+            let max_sst_density = {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    (*c_stats).max_sst_density
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0.0
+                }
+            };
+            let max_sst_density_level = {
+                #[cfg(tidesdb_has_tombstone_stats)]
+                {
+                    (*c_stats).max_sst_density_level
+                }
+                #[cfg(not(tidesdb_has_tombstone_stats))]
+                {
+                    0
+                }
+            };
 
             let config = if (*c_stats).config.is_null() {
                 None
@@ -783,11 +840,8 @@ impl ColumnFamily {
     ///
     /// `Ok(())` on success, or an error: `InvalidArgs` if both endpoints are `None`,
     /// `Locked` if another compaction is already running, or standard I/O / memory errors.
-    pub fn compact_range(
-        &self,
-        start_key: Option<&[u8]>,
-        end_key: Option<&[u8]>,
-    ) -> Result<()> {
+    #[cfg(tidesdb_has_compact_range)]
+    pub fn compact_range(&self, start_key: Option<&[u8]>, end_key: Option<&[u8]>) -> Result<()> {
         // Empty slices are treated as unbounded (NULL) to avoid passing a
         // dangling pointer-of-element-zero deref to C.
         let (start_ptr, start_len) = match start_key {
@@ -799,9 +853,8 @@ impl ColumnFamily {
             _ => (std::ptr::null(), 0),
         };
 
-        let result = unsafe {
-            ffi::tidesdb_compact_range(self.cf, start_ptr, start_len, end_ptr, end_len)
-        };
+        let result =
+            unsafe { ffi::tidesdb_compact_range(self.cf, start_ptr, start_len, end_ptr, end_len) };
         check_result(result, "failed to compact range")
     }
 
@@ -936,9 +989,7 @@ impl ColumnFamily {
     /// After clearing, no callback will fire on subsequent commits.
     pub fn clear_commit_hook(&mut self) -> Result<()> {
         if let Some(raw) = self.hook_ctx.take() {
-            let result = unsafe {
-                ffi::tidesdb_cf_set_commit_hook(self.cf, None, ptr::null_mut())
-            };
+            let result = unsafe { ffi::tidesdb_cf_set_commit_hook(self.cf, None, ptr::null_mut()) };
             // Free the boxed callback regardless of C call result
             unsafe {
                 drop(Box::from_raw(raw));

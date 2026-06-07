@@ -7,7 +7,7 @@
 
 use crate::config::IsolationLevel;
 use crate::db::ColumnFamily;
-use crate::error::{check_result, Error, Result};
+use crate::error::{Error, Result, check_result};
 use crate::ffi;
 use crate::iterator::Iterator;
 use std::ffi::CString;
@@ -172,7 +172,7 @@ impl Transaction {
     ///
     /// * `cf` - The column family
     /// * `key` - The key
-    #[cfg(any(feature = "v9_1_0", feature = "v9_2_0"))]
+    #[cfg(tidesdb_has_txn_single_delete)]
     pub fn single_delete(&self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
         let key_ptr = if key.is_empty() {
             ptr::null()
@@ -180,8 +180,7 @@ impl Transaction {
             key.as_ptr()
         };
 
-        let result =
-            unsafe { ffi::tidesdb_txn_single_delete(self.txn, cf.cf, key_ptr, key.len()) };
+        let result = unsafe { ffi::tidesdb_txn_single_delete(self.txn, cf.cf, key_ptr, key.len()) };
         check_result(result, "failed to single-delete key")
     }
 
@@ -241,8 +240,7 @@ impl Transaction {
     /// * `name` - The savepoint name
     pub fn rollback_to_savepoint(&self, name: &str) -> Result<()> {
         let c_name = CString::new(name)?;
-        let result =
-            unsafe { ffi::tidesdb_txn_rollback_to_savepoint(self.txn, c_name.as_ptr()) };
+        let result = unsafe { ffi::tidesdb_txn_rollback_to_savepoint(self.txn, c_name.as_ptr()) };
         check_result(result, "failed to rollback to savepoint")
     }
 
