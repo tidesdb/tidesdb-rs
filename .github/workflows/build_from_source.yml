@@ -29,6 +29,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare local source crate patches
+        shell: bash
+        run: |
+          PYTHON=python3
+          if ! command -v python3 >/dev/null 2>&1; then
+            PYTHON=python
+          fi
+          "$PYTHON" -m venv .cargo/sync-venv
+          VENV_PYTHON=.cargo/sync-venv/bin/python
+          if [ ! -x "$VENV_PYTHON" ]; then
+            VENV_PYTHON=.cargo/sync-venv/Scripts/python.exe
+          fi
+          "$VENV_PYTHON" -m pip install tomlkit requests InquirerPy
+          "$VENV_PYTHON" scripts/sync-versions.py \
+            --prepare-local-patches .cargo/tidesdb-src \
+            --write-cargo-patch-config .cargo/config.toml \
+            --versions current \
+            --yes
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -150,6 +169,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Prepare local source crate patches
+        shell: bash
+        run: |
+          PYTHON=python3
+          if ! command -v python3 >/dev/null 2>&1; then
+            PYTHON=python
+          fi
+          "$PYTHON" -m venv .cargo/sync-venv
+          VENV_PYTHON=.cargo/sync-venv/bin/python
+          if [ ! -x "$VENV_PYTHON" ]; then
+            VENV_PYTHON=.cargo/sync-venv/Scripts/python.exe
+          fi
+          "$VENV_PYTHON" -m pip install tomlkit requests InquirerPy
+          "$VENV_PYTHON" scripts/sync-versions.py \
+            --prepare-local-patches .cargo/tidesdb-src \
+            --write-cargo-patch-config .cargo/config.toml \
+            --versions current \
+            --yes
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
