@@ -24,7 +24,7 @@ fn selected_version() -> String {
     }
     match selected {
         Some((a, b, c)) => format!("{a}.{b}.{c}"),
-        None => "9.2.0".to_string(),
+        None => "9.3.5".to_string(),
     }
 }
 
@@ -40,35 +40,153 @@ fn version_at_least(version: &str, major: u32, minor: u32, patch: u32) -> bool {
     parse_version(version).is_some_and(|v| v >= (major, minor, patch))
 }
 
-fn download_and_extract(version: &str, out_dir: &str) -> PathBuf {
-    let url = format!("https://github.com/tidesdb/tidesdb/archive/refs/tags/v{version}.tar.gz");
-    let tarball_path = PathBuf::from(out_dir).join(format!("tidesdb-{version}.tar.gz"));
-    let extract_dir = PathBuf::from(out_dir).join("tidesdb-source");
+// BEGIN GENERATED TIDESDB SOURCE ARCHIVES
+cfg_if::cfg_if! {
+    if #[cfg(feature = "v9_3_5")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_5::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_3_4")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_4::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_3_3")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_3::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_3_2")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_2::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_3_1")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_1::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_3_0")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_0::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_2_5")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_2_5::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_2_4")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_2_4::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_2_3")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_2_3::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_2_2")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_2_2::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_2_1")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_2_1::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_2_0")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_2_0::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_1_0")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_1_0::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_9")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_9::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_8")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_8::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_7")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_7::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_6")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_6::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_5")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_5::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_4")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_4::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_3")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_3::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_2")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_2::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_1")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_1::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_0_0")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_0_0::archive_path()
+        }
+    }
+    else {
+        fn source_archive() -> PathBuf {
+            panic!("no tidesdb source crate is enabled; enable a vX_Y_Z feature")
+        }
+    }
+}
 
-    // Skip download if already extracted
+// END GENERATED TIDESDB SOURCE ARCHIVES
+
+fn extract_archive(version: &str, out_dir: &str) -> PathBuf {
+    let archive_path = source_archive();
+    let extract_dir = PathBuf::from(out_dir).join("tidesdb-source");
     let src_dir = extract_dir.join(format!("tidesdb-{version}"));
+
     if src_dir.exists() {
         return src_dir;
     }
 
-    // Download
-    let resp = ureq::get(&url)
-        .call()
-        .unwrap_or_else(|e| panic!("Failed to download tidesdb v{version} from {url}: {e}"));
-    let mut tarball = std::fs::File::create(&tarball_path).expect("Failed to create tarball file");
-    std::io::copy(&mut resp.into_reader(), &mut tarball).expect("Failed to write tarball");
-
-    // Extract
-    let tarball = std::fs::File::open(&tarball_path).expect("Failed to open tarball");
+    let tarball = std::fs::File::open(&archive_path).unwrap_or_else(|e| {
+        panic!(
+            "failed to open TidesDB v{version} source archive {}: {e}",
+            archive_path.display()
+        )
+    });
     let decoder = flate2::read::GzDecoder::new(tarball);
     let mut archive = tar::Archive::new(decoder);
     std::fs::create_dir_all(&extract_dir).expect("Failed to create extract directory");
     archive
         .unpack(&extract_dir)
-        .expect("Failed to extract tarball");
-
-    // Clean up tarball
-    let _ = std::fs::remove_file(&tarball_path);
+        .expect("Failed to extract TidesDB source archive");
 
     src_dir
 }
@@ -79,7 +197,7 @@ fn with_objectstore() -> bool {
 
 fn build_from_source(version: &str) -> PathBuf {
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let src_dir = download_and_extract(version, &out_dir);
+    let src_dir = extract_archive(version, &out_dir);
 
     let mut cfg = cmake::Config::new(&src_dir);
     cfg.define("TIDESDB_BUILD_TESTS", "OFF")
