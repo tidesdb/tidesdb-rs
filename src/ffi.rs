@@ -32,6 +32,12 @@ pub const TDB_ERR_INVALID_DB: c_int = -10;
 pub const TDB_ERR_UNKNOWN: c_int = -11;
 pub const TDB_ERR_LOCKED: c_int = -12;
 pub const TDB_ERR_READONLY: c_int = -13;
+pub const TDB_ERR_BUSY: c_int = -14;
+
+/// Object store backend identifiers (`tidesdb_objstore_backend_t`)
+pub const TDB_BACKEND_FS: c_int = 0;
+pub const TDB_BACKEND_S3: c_int = 1;
+pub const TDB_BACKEND_UNKNOWN: c_int = 99;
 
 /// Compression algorithms (values from C API documentation)
 pub const NO_COMPRESSION: c_int = 0;
@@ -105,6 +111,26 @@ pub struct tidesdb_objstore_config_t {
     pub replica_mode: c_int,
     pub replica_sync_interval_us: u64,
     pub replica_replay_wal: c_int,
+}
+
+/// Full S3 connector configuration (TLS + multipart tuning).
+///
+/// Zero-initialize and set what you need; the all-zero defaults are secure
+/// (TLS verify on, no custom CA) and use the built-in multipart sizes.
+#[repr(C)]
+pub struct tidesdb_objstore_s3_config_t {
+    pub endpoint: *const c_char,
+    pub bucket: *const c_char,
+    pub prefix: *const c_char,
+    pub access_key: *const c_char,
+    pub secret_key: *const c_char,
+    pub region: *const c_char,
+    pub use_ssl: c_int,
+    pub use_path_style: c_int,
+    pub tls_ca_path: *const c_char,
+    pub tls_insecure_skip_verify: c_int,
+    pub multipart_threshold: size_t,
+    pub multipart_part_size: size_t,
 }
 
 /// Custom allocator function types
@@ -580,6 +606,74 @@ unsafe extern "C" {
     // Object store default config
     pub fn tidesdb_objstore_default_config() -> tidesdb_objstore_config_t;
 
+    // Built-in comparator functions (raw symbols, usable as comparator_fn_cached)
+    pub fn tidesdb_comparator_memcmp(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int;
+    pub fn tidesdb_comparator_lexicographic(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int;
+    pub fn tidesdb_comparator_uint64(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int;
+    pub fn tidesdb_comparator_int64(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int;
+    pub fn tidesdb_comparator_reverse_memcmp(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int;
+    pub fn tidesdb_comparator_case_insensitive(
+        key1: *const u8,
+        key1_size: size_t,
+        key2: *const u8,
+        key2_size: size_t,
+        ctx: *mut c_void,
+    ) -> c_int;
+
     // Generic free
     pub fn tidesdb_free(ptr: *mut c_void);
+}
+
+// S3-compatible object store connector factories.
+//
+// These symbols are only present when the C library was built with
+// `TIDESDB_WITH_S3=ON`, so they are gated behind the `objectstore` feature
+// to avoid unresolved symbols at link time.
+#[cfg(feature = "objectstore")]
+#[link(name = "tidesdb")]
+unsafe extern "C" {
+    pub fn tidesdb_objstore_s3_create(
+        endpoint: *const c_char,
+        bucket: *const c_char,
+        prefix: *const c_char,
+        access_key: *const c_char,
+        secret_key: *const c_char,
+        region: *const c_char,
+        use_ssl: c_int,
+        use_path_style: c_int,
+    ) -> *mut tidesdb_objstore_t;
+
+    pub fn tidesdb_objstore_s3_create_config(
+        config: *const tidesdb_objstore_s3_config_t,
+    ) -> *mut tidesdb_objstore_t;
 }

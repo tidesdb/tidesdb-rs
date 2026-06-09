@@ -38,6 +38,8 @@ pub enum ErrorCode {
     Locked,
     /// Database is in read-only mode
     ReadOnly,
+    /// Resource is busy (another operation is in progress)
+    Busy,
 }
 
 impl ErrorCode {
@@ -56,6 +58,7 @@ impl ErrorCode {
             ffi::TDB_ERR_INVALID_DB => Some(ErrorCode::InvalidDb),
             ffi::TDB_ERR_LOCKED => Some(ErrorCode::Locked),
             ffi::TDB_ERR_READONLY => Some(ErrorCode::ReadOnly),
+            ffi::TDB_ERR_BUSY => Some(ErrorCode::Busy),
             _ => Some(ErrorCode::Unknown),
         }
     }
@@ -77,6 +80,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::Unknown => write!(f, "unknown error"),
             ErrorCode::Locked => write!(f, "database is locked"),
             ErrorCode::ReadOnly => write!(f, "database is read-only"),
+            ErrorCode::Busy => write!(f, "resource is busy"),
         }
     }
 }
