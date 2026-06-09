@@ -96,6 +96,8 @@ pub use config::{
     ColumnFamilyConfig, CompressionAlgorithm, Config, IsolationLevel, LogLevel, ObjectStoreConfig,
     SyncMode,
 };
+#[cfg(feature = "objectstore")]
+pub use config::S3Config;
 #[cfg(tidesdb_has_raise_open_file_limit)]
 pub use db::raise_open_file_limit;
 pub use db::{ColumnFamily, CommitOp, TidesDB, finalize, free, init, init_with_allocator};
@@ -1921,5 +1923,153 @@ mod tests {
         assert_eq!(cfg.max_concurrent_flushes, c.max_concurrent_flushes);
         #[cfg(not(tidesdb_has_max_concurrent_flushes))]
         assert_eq!(cfg.max_concurrent_flushes, 0);
+    }
+
+    #[test]
+    fn test_error_code_busy() {
+        // Verify the Busy error code (-14) is recognized and rendered.
+        let code = ErrorCode::from_code(-14);
+        assert_eq!(code, Some(ErrorCode::Busy));
+        assert_eq!(ErrorCode::Busy.to_string(), "resource is busy");
+    }
+
+    #[test]
+    fn test_builtin_comparator_symbols_callable() {
+        // The built-in comparator C functions should be linkable and behave like memcmp.
+        let a = b"abc";
+        let b = b"abd";
+        let lt = unsafe {
+            ffi::tidesdb_comparator_memcmp(
+                a.as_ptr(),
+                a.len(),
+                b.as_ptr(),
+                b.len(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(lt < 0, "abc should sort before abd");
+
+        let eq = unsafe {
+            ffi::tidesdb_comparator_memcmp(
+                a.as_ptr(),
+                a.len(),
+                a.as_ptr(),
+                a.len(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(eq, 0, "equal keys should compare equal");
+
+        // case_insensitive should treat ABC == abc.
+        let upper = b"ABC";
+        let ci = unsafe {
+            ffi::tidesdb_comparator_case_insensitive(
+                upper.as_ptr(),
+                upper.len(),
+                a.as_ptr(),
+                a.len(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(ci, 0, "case-insensitive compare of ABC and abc should be equal");
+    }
+
+    #[cfg(tidesdb_has_write_amp_stats)]
+    #[test]
+    fn test_write_amp_cf_stats() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("wa_cf", cf_config).unwrap();
+        let cf = db.get_column_family("wa_cf").unwrap();
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..200 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+        cf.flush_memtable().unwrap();
+        cf.purge().unwrap();
+
+        let stats = cf.get_stats().unwrap();
+
+        // Write-amplification counters should be accessible.
+        let _ = stats.compaction_bytes_written;
+        let _ = stats.compaction_bytes_read;
+        let _ = stats.flush_count;
+        let _ = stats.compaction_count;
+
+        // Committing real data must register user bytes and at least one flush.
+        assert!(
+            stats.user_bytes_written > 0,
+            "expected user_bytes_written after committing data"
+        );
+        assert!(
+            stats.flush_bytes_written > 0,
+            "expected flush_bytes_written after flushing"
+        );
+    }
+
+    #[cfg(tidesdb_has_write_amp_stats)]
+    #[test]
+    fn test_write_amp_db_stats() {
+        let (db, _temp_dir) = create_test_db();
+
+        let cf_config = ColumnFamilyConfig::default();
+        db.create_column_family("wa_db_cf", cf_config).unwrap();
+        let cf = db.get_column_family("wa_db_cf").unwrap();
+
+        {
+            let mut txn = db.begin_transaction().unwrap();
+            for i in 0..200 {
+                let key = format!("key{:04}", i);
+                let value = format!("value{}", i);
+                txn.put(&cf, key.as_bytes(), value.as_bytes(), -1).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+        cf.flush_memtable().unwrap();
+
+        let stats = db.get_db_stats().unwrap();
+
+        // Write-amplification counters should be accessible.
+        let _ = stats.uwal_bytes_written;
+        let _ = stats.wal_bytes_written;
+        let _ = stats.flush_bytes_written;
+        let _ = stats.compaction_bytes_written;
+        let _ = stats.compaction_bytes_read;
+        let _ = stats.flush_count;
+        let _ = stats.compaction_count;
+
+        assert!(
+            stats.user_bytes_written > 0,
+            "expected db-wide user_bytes_written after committing data"
+        );
+    }
+
+    #[cfg(feature = "objectstore")]
+    #[test]
+    fn test_s3_config_builder() {
+        let s3 = S3Config::new("minio.local:9000", "mybucket", "ak", "sk")
+            .prefix("db1/")
+            .region("us-east-1")
+            .use_ssl(false)
+            .use_path_style(true)
+            .multipart_threshold(64 * 1024 * 1024);
+
+        assert_eq!(s3.endpoint, "minio.local:9000");
+        assert_eq!(s3.bucket, "mybucket");
+        assert_eq!(s3.prefix.as_deref(), Some("db1/"));
+        assert_eq!(s3.region.as_deref(), Some("us-east-1"));
+        assert!(!s3.use_ssl);
+        assert!(s3.use_path_style);
+        assert_eq!(s3.multipart_threshold, 64 * 1024 * 1024);
+
+        let config = Config::new("./s3db").object_store_s3(s3);
+        assert!(config.object_store_s3.is_some());
     }
 }

@@ -590,6 +590,39 @@ impl TidesDB {
 
         let c_stats = unsafe { c_stats.assume_init() };
 
+        // Write-amplification counters (tidesdb >= 9.3.4; 0 on older libraries).
+        #[cfg(tidesdb_has_write_amp_stats)]
+        let (
+            uwal_bytes_written,
+            wal_bytes_written,
+            flush_bytes_written,
+            compaction_bytes_written,
+            compaction_bytes_read,
+            user_bytes_written,
+            flush_count,
+            compaction_count,
+        ) = (
+            c_stats.uwal_bytes_written,
+            c_stats.wal_bytes_written,
+            c_stats.flush_bytes_written,
+            c_stats.compaction_bytes_written,
+            c_stats.compaction_bytes_read,
+            c_stats.user_bytes_written,
+            c_stats.flush_count,
+            c_stats.compaction_count,
+        );
+        #[cfg(not(tidesdb_has_write_amp_stats))]
+        let (
+            uwal_bytes_written,
+            wal_bytes_written,
+            flush_bytes_written,
+            compaction_bytes_written,
+            compaction_bytes_read,
+            user_bytes_written,
+            flush_count,
+            compaction_count,
+        ) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+
         let object_store_connector = if c_stats.object_store_connector.is_null() {
             String::new()
         } else {
@@ -630,6 +663,14 @@ impl TidesDB {
             total_uploads: c_stats.total_uploads,
             total_upload_failures: c_stats.total_upload_failures,
             replica_mode: c_stats.replica_mode != 0,
+            uwal_bytes_written,
+            wal_bytes_written,
+            flush_bytes_written,
+            compaction_bytes_written,
+            compaction_bytes_read,
+            user_bytes_written,
+            flush_count,
+            compaction_count,
         })
     }
 
@@ -782,6 +823,36 @@ impl ColumnFamily {
                 }
             };
 
+            // Write-amplification counters (tidesdb >= 9.3.4; 0 on older libraries).
+            #[cfg(tidesdb_has_write_amp_stats)]
+            let (
+                wal_bytes_written,
+                flush_bytes_written,
+                compaction_bytes_written,
+                compaction_bytes_read,
+                user_bytes_written,
+                flush_count,
+                compaction_count,
+            ) = (
+                (*c_stats).wal_bytes_written,
+                (*c_stats).flush_bytes_written,
+                (*c_stats).compaction_bytes_written,
+                (*c_stats).compaction_bytes_read,
+                (*c_stats).user_bytes_written,
+                (*c_stats).flush_count,
+                (*c_stats).compaction_count,
+            );
+            #[cfg(not(tidesdb_has_write_amp_stats))]
+            let (
+                wal_bytes_written,
+                flush_bytes_written,
+                compaction_bytes_written,
+                compaction_bytes_read,
+                user_bytes_written,
+                flush_count,
+                compaction_count,
+            ) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+
             let config = if (*c_stats).config.is_null() {
                 None
             } else {
@@ -812,6 +883,13 @@ impl ColumnFamily {
                 level_tombstone_counts,
                 max_sst_density,
                 max_sst_density_level,
+                wal_bytes_written,
+                flush_bytes_written,
+                compaction_bytes_written,
+                compaction_bytes_read,
+                user_bytes_written,
+                flush_count,
+                compaction_count,
             }
         };
 

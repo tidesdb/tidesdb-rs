@@ -52,6 +52,27 @@ pub struct Stats {
     pub max_sst_density: f64,
     /// 1-based level index where `max_sst_density` was observed (0 if no SSTables)
     pub max_sst_density_level: i32,
+    /// Framed bytes appended to this CF's WAL (0 in unified mode).
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub wal_bytes_written: u64,
+    /// On-disk bytes this CF's flushes wrote to L0 SSTables.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub flush_bytes_written: u64,
+    /// On-disk bytes this CF's compactions wrote.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub compaction_bytes_written: u64,
+    /// On-disk bytes this CF's compactions read as input.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub compaction_bytes_read: u64,
+    /// Logical key+value bytes committed to this CF (write-amplification denominator).
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub user_bytes_written: u64,
+    /// Flushed SSTables produced by this CF.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub flush_count: u64,
+    /// Compaction output SSTables produced by this CF.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub compaction_count: u64,
 }
 
 /// Database-level aggregate statistics.
@@ -119,6 +140,30 @@ pub struct DbStats {
     pub total_upload_failures: u64,
     /// Whether running in read-only replica mode
     pub replica_mode: bool,
+    /// Framed bytes appended to the shared unified WAL (0 if unified mode off).
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub uwal_bytes_written: u64,
+    /// Per-CF WAL bytes summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub wal_bytes_written: u64,
+    /// Flush output bytes summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub flush_bytes_written: u64,
+    /// Compaction output bytes summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub compaction_bytes_written: u64,
+    /// Compaction input bytes summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub compaction_bytes_read: u64,
+    /// Logical committed bytes summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub user_bytes_written: u64,
+    /// Flushed SSTables summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub flush_count: u64,
+    /// Compaction output SSTables summed across all column families.
+    /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
+    pub compaction_count: u64,
 }
 
 /// Statistics for the block cache.

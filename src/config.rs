@@ -277,6 +277,105 @@ impl Default for ObjectStoreConfig {
     }
 }
 
+/// S3-compatible object store connector configuration.
+///
+/// Used with [`Config::object_store_s3`] to back a database with an S3 bucket
+/// (AWS S3, MinIO, etc.). Requires the `objectstore` Cargo feature and a TidesDB
+/// C library built with `TIDESDB_WITH_S3=ON`.
+///
+/// The all-default values are secure: TLS verification is on, no custom CA is
+/// used, and the library's built-in multipart sizes apply (`0` = library default).
+#[cfg(feature = "objectstore")]
+#[derive(Debug, Clone, Default)]
+pub struct S3Config {
+    /// S3 endpoint (e.g. `"s3.amazonaws.com"` or `"minio.local:9000"`).
+    pub endpoint: String,
+    /// Bucket name.
+    pub bucket: String,
+    /// Key prefix (e.g. `"production/db1/"`), or `None`.
+    pub prefix: Option<String>,
+    /// AWS access key ID.
+    pub access_key: String,
+    /// AWS secret access key.
+    pub secret_key: String,
+    /// AWS region (e.g. `"us-east-1"`), or `None` for MinIO / the default.
+    pub region: Option<String>,
+    /// `true` for HTTPS, `false` for HTTP.
+    pub use_ssl: bool,
+    /// `true` for path-style URLs (MinIO), `false` for virtual-hosted (AWS).
+    pub use_path_style: bool,
+    /// Custom CA bundle file path, or `None` for the system bundle.
+    pub tls_ca_path: Option<String>,
+    /// `true` disables TLS peer+host verification (test only, insecure).
+    pub tls_insecure_skip_verify: bool,
+    /// Object size at/above which multipart upload is used; `0` = library default.
+    pub multipart_threshold: usize,
+    /// Multipart chunk size in bytes; `0` = library default.
+    pub multipart_part_size: usize,
+}
+
+#[cfg(feature = "objectstore")]
+impl S3Config {
+    /// Create a new S3 configuration with the required endpoint, bucket, and credentials.
+    pub fn new(endpoint: &str, bucket: &str, access_key: &str, secret_key: &str) -> Self {
+        S3Config {
+            endpoint: endpoint.to_string(),
+            bucket: bucket.to_string(),
+            access_key: access_key.to_string(),
+            secret_key: secret_key.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the key prefix.
+    pub fn prefix(mut self, prefix: &str) -> Self {
+        self.prefix = Some(prefix.to_string());
+        self
+    }
+
+    /// Set the AWS region.
+    pub fn region(mut self, region: &str) -> Self {
+        self.region = Some(region.to_string());
+        self
+    }
+
+    /// Enable or disable HTTPS (TLS).
+    pub fn use_ssl(mut self, enable: bool) -> Self {
+        self.use_ssl = enable;
+        self
+    }
+
+    /// Enable or disable path-style URLs (required for MinIO).
+    pub fn use_path_style(mut self, enable: bool) -> Self {
+        self.use_path_style = enable;
+        self
+    }
+
+    /// Set a custom CA bundle file path.
+    pub fn tls_ca_path(mut self, path: &str) -> Self {
+        self.tls_ca_path = Some(path.to_string());
+        self
+    }
+
+    /// Disable TLS peer+host verification (test only, insecure).
+    pub fn tls_insecure_skip_verify(mut self, enable: bool) -> Self {
+        self.tls_insecure_skip_verify = enable;
+        self
+    }
+
+    /// Set the multipart upload threshold in bytes (`0` = library default).
+    pub fn multipart_threshold(mut self, size: usize) -> Self {
+        self.multipart_threshold = size;
+        self
+    }
+
+    /// Set the multipart chunk size in bytes (`0` = library default).
+    pub fn multipart_part_size(mut self, size: usize) -> Self {
+        self.multipart_part_size = size;
+        self
+    }
+}
+
 /// Holds all C-side allocations that must outlive the `tidesdb_open()` call.
 pub(crate) struct CConfigData {
     pub config: ffi::tidesdb_config_t,
@@ -320,6 +419,10 @@ pub struct Config {
     pub unified_memtable_sync_interval_us: u64,
     /// Filesystem root directory for the object store connector (None = no object store)
     pub object_store_fs_path: Option<String>,
+    /// S3 object store connector configuration (None = no S3 object store).
+    /// Takes precedence over `object_store_fs_path` when both are set.
+    #[cfg(feature = "objectstore")]
+    pub object_store_s3: Option<S3Config>,
     /// Object store behavior configuration (None = use defaults when object store is set)
     pub object_store_config: Option<ObjectStoreConfig>,
     /// Global semaphore on the number of in-flight memtable flushes across all column
@@ -437,6 +540,17 @@ impl Config {
         self
     }
 
+    /// Enable object store mode with an S3-compatible connector (AWS S3, MinIO, etc.).
+    ///
+    /// Requires the `objectstore` Cargo feature and a TidesDB C library built with
+    /// `TIDESDB_WITH_S3=ON`. Takes precedence over [`object_store_fs`](Self::object_store_fs)
+    /// when both are set. Object store mode automatically enables unified memtable mode.
+    #[cfg(feature = "objectstore")]
+    pub fn object_store_s3(mut self, config: S3Config) -> Self {
+        self.object_store_s3 = Some(config);
+        self
+    }
+
     /// Set the object store behavior configuration.
     ///
     /// Controls caching, upload/download parallelism, WAL replication,
@@ -472,6 +586,43 @@ impl Config {
                 ptr
             }
             None => std::ptr::null_mut(),
+        };
+
+        // An S3 connector takes precedence over the filesystem connector.
+        // The C factory copies all fields, so the temporary CStrings need only
+        // outlive the call itself.
+        #[cfg(feature = "objectstore")]
+        let objstore_ptr = if let Some(s3) = &self.object_store_s3 {
+            let c_endpoint = CString::new(s3.endpoint.as_str())?;
+            let c_bucket = CString::new(s3.bucket.as_str())?;
+            let c_access = CString::new(s3.access_key.as_str())?;
+            let c_secret = CString::new(s3.secret_key.as_str())?;
+            let c_prefix = s3.prefix.as_deref().map(CString::new).transpose()?;
+            let c_region = s3.region.as_deref().map(CString::new).transpose()?;
+            let c_ca = s3.tls_ca_path.as_deref().map(CString::new).transpose()?;
+
+            let s3_c_config = ffi::tidesdb_objstore_s3_config_t {
+                endpoint: c_endpoint.as_ptr(),
+                bucket: c_bucket.as_ptr(),
+                prefix: c_prefix.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                access_key: c_access.as_ptr(),
+                secret_key: c_secret.as_ptr(),
+                region: c_region.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                use_ssl: if s3.use_ssl { 1 } else { 0 },
+                use_path_style: if s3.use_path_style { 1 } else { 0 },
+                tls_ca_path: c_ca.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+                tls_insecure_skip_verify: if s3.tls_insecure_skip_verify { 1 } else { 0 },
+                multipart_threshold: s3.multipart_threshold,
+                multipart_part_size: s3.multipart_part_size,
+            };
+
+            let ptr = unsafe { ffi::tidesdb_objstore_s3_create_config(&s3_c_config) };
+            if ptr.is_null() {
+                return Err(crate::error::Error::NullPointer("S3 object store connector"));
+            }
+            ptr
+        } else {
+            objstore_ptr
         };
 
         // Build object store config if configured (or if connector is set, use defaults)
@@ -557,6 +708,8 @@ impl Default for Config {
             },
             unified_memtable_sync_interval_us: c.unified_memtable_sync_interval_us,
             object_store_fs_path: None,
+            #[cfg(feature = "objectstore")]
+            object_store_s3: None,
             object_store_config: None,
             max_concurrent_flushes: {
                 #[cfg(tidesdb_has_max_concurrent_flushes)]
