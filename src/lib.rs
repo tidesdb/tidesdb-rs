@@ -422,7 +422,7 @@ mod tests {
             .write_buffer_size(128 * 1024 * 1024)
             .level_size_ratio(10)
             .min_levels(5)
-            .compression_algorithm(CompressionAlgorithm::Lz4)
+            .compression_algorithm(CompressionAlgorithm::None)
             .enable_bloom_filter(true)
             .bloom_fpr(0.01)
             .enable_block_indexes(true)
@@ -552,7 +552,7 @@ mod tests {
         // Create new configuration
         let new_config = ColumnFamilyConfig::new()
             .write_buffer_size(256 * 1024 * 1024)
-            .compression_algorithm(CompressionAlgorithm::Zstd);
+            .compression_algorithm(CompressionAlgorithm::None);
 
         // Update runtime config
         cf.update_runtime_config(&new_config, false).unwrap();
@@ -621,6 +621,7 @@ mod tests {
         assert_eq!(config.min_levels, 4);
         assert_eq!(config.dividing_level_offset, 2);
         assert_eq!(config.klog_value_threshold, 1024);
+        assert_eq!(config.compression_algorithm, CompressionAlgorithm::Lz4);
         assert_eq!(config.index_sample_ratio, 16);
         assert_eq!(config.block_index_prefix_len, 4);
         assert_eq!(config.comparator_name, "memcmp");
@@ -638,7 +639,7 @@ mod tests {
         // Create column family with B+tree format enabled
         let cf_config = ColumnFamilyConfig::new()
             .use_btree(true)
-            .compression_algorithm(CompressionAlgorithm::Lz4);
+            .compression_algorithm(CompressionAlgorithm::None);
 
         db.create_column_family("btree_cf", cf_config).unwrap();
 

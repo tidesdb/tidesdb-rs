@@ -149,6 +149,103 @@ jobs:
           export PATH="/mingw64/bin:$PATH"
           cargo build --release
 
+  build-from-source-no-compression:
+    runs-on: ubuntu-latest
+    name: Linux x64 (no compression)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare local source crate patches
+        shell: bash
+        run: |
+          PYTHON=python3
+          if ! command -v python3 >/dev/null 2>&1; then
+            PYTHON=python
+          fi
+          "$PYTHON" -m venv .cargo/sync-venv
+          VENV_PYTHON=.cargo/sync-venv/bin/python
+          if [ ! -x "$VENV_PYTHON" ]; then
+            VENV_PYTHON=.cargo/sync-venv/Scripts/python.exe
+          fi
+          "$VENV_PYTHON" -m pip install tomlkit requests InquirerPy
+          "$VENV_PYTHON" scripts/sync-versions.py \
+            --prepare-local-patches .cargo/tidesdb-src \
+            --write-cargo-patch-config .cargo/config.toml \
+            --versions current \
+            --yes
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+
+      - name: Build from source without compression
+        run: cargo build --release --no-default-features --features v9_3_6
+
+  build-from-source-compression-gates:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: compression
+            features: v9_3_6,compression
+            packages: libzstd-dev liblz4-dev libsnappy-dev
+          - name: snappy
+            features: v9_3_6,snappy
+            packages: libsnappy-dev
+          - name: lz4
+            features: v9_3_6,lz4
+            packages: liblz4-dev
+          - name: zstd
+            features: v9_3_6,zstd
+            packages: libzstd-dev
+
+    runs-on: ubuntu-latest
+    name: Linux x64 (${{ matrix.name }} compression gate)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare local source crate patches
+        shell: bash
+        run: |
+          PYTHON=python3
+          if ! command -v python3 >/dev/null 2>&1; then
+            PYTHON=python
+          fi
+          "$PYTHON" -m venv .cargo/sync-venv
+          VENV_PYTHON=.cargo/sync-venv/bin/python
+          if [ ! -x "$VENV_PYTHON" ]; then
+            VENV_PYTHON=.cargo/sync-venv/Scripts/python.exe
+          fi
+          "$VENV_PYTHON" -m pip install tomlkit requests InquirerPy
+          "$VENV_PYTHON" scripts/sync-versions.py \
+            --prepare-local-patches .cargo/tidesdb-src \
+            --write-cargo-patch-config .cargo/config.toml \
+            --versions current \
+            --yes
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake pkg-config ${{ matrix.packages }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+
+      - name: Build source compression gate
+        run: cargo build --release --no-default-features --features ${{ matrix.features }}
+
   build-from-source-objectstore:
     strategy:
       fail-fast: false

@@ -85,6 +85,18 @@ fn with_objectstore() -> bool {
     std::env::var("CARGO_FEATURE_OBJECTSTORE").is_ok()
 }
 
+fn with_snappy() -> bool {
+    std::env::var("CARGO_FEATURE_SNAPPY").is_ok()
+}
+
+fn with_lz4() -> bool {
+    std::env::var("CARGO_FEATURE_LZ4").is_ok()
+}
+
+fn with_zstd() -> bool {
+    std::env::var("CARGO_FEATURE_ZSTD").is_ok()
+}
+
 fn build_from_source(version: &str) -> PathBuf {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let src_dir = extract_archive(version, &out_dir);
@@ -92,6 +104,15 @@ fn build_from_source(version: &str) -> PathBuf {
     let mut cfg = cmake::Config::new(&src_dir);
     cfg.define("TIDESDB_BUILD_TESTS", "OFF")
         .define("BUILD_SHARED_LIBS", "OFF");
+
+    if version_at_least(version, 9, 3, 4) {
+        cfg.define(
+            "TIDESDB_WITH_SNAPPY",
+            if with_snappy() { "ON" } else { "OFF" },
+        )
+        .define("TIDESDB_WITH_LZ4", if with_lz4() { "ON" } else { "OFF" })
+        .define("TIDESDB_WITH_ZSTD", if with_zstd() { "ON" } else { "OFF" });
+    }
 
     if with_objectstore() {
         cfg.define("TIDESDB_WITH_S3", "ON");
@@ -172,13 +193,25 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=tidesdb");
 
-    // Link compression dependencies via pkg-config (handles search paths)
     let mut missing = Vec::new();
-    for dep in &["libzstd", "liblz4", "snappy"] {
-        if pkg_config::probe_library(dep).is_err() {
-            let lib_name = dep.strip_prefix("lib").unwrap_or(dep);
-            println!("cargo:rustc-link-lib={lib_name}");
-            missing.push(lib_name);
+    let compression_deps = [
+        ("libzstd", "zstd", with_zstd()),
+        ("liblz4", "lz4", with_lz4()),
+        ("snappy", "snappy", with_snappy()),
+    ];
+    let always_needs_compression_deps = !version_at_least(&version, 9, 3, 4);
+
+    if always_needs_compression_deps || compression_deps.iter().any(|(_, _, enabled)| *enabled) {
+        // Older TidesDB releases always compile compression backends into the C
+        // library. v9.3.4+ can gate each optional codec independently.
+        for (dep, lib_name, enabled) in compression_deps {
+            if !always_needs_compression_deps && !enabled {
+                continue;
+            }
+            if pkg_config::probe_library(dep).is_err() {
+                println!("cargo:rustc-link-lib={lib_name}");
+                missing.push(lib_name);
+            }
         }
     }
     // Link S3/object store dependencies (libcurl + openssl)
@@ -197,20 +230,50 @@ fn main() {
     if !missing.is_empty() {
         let mut msg = format!(
             "cargo:warning=Could not find {} via pkg-config, falling back to link by name. \
-             If linking fails, install them:\n\
-             \x20 Debian/Ubuntu: sudo apt install libzstd-dev liblz4-dev libsnappy-dev",
+             If linking fails, install them:",
             missing.join(", ")
         );
-        if with_objectstore() {
-            msg.push_str(" libcurl4-openssl-dev libssl-dev");
+        let needs_compression_deps =
+            always_needs_compression_deps || with_snappy() || with_lz4() || with_zstd();
+
+        let mut debian_packages = Vec::new();
+        let mut macos_packages = Vec::new();
+        let mut windows_packages = Vec::new();
+
+        if always_needs_compression_deps || with_zstd() {
+            debian_packages.push("libzstd-dev");
+            macos_packages.push("zstd");
+            windows_packages.push("zstd:x64-windows");
         }
-        msg.push_str("\n\x20 macOS:         brew install zstd lz4 snappy");
-        if with_objectstore() {
-            msg.push_str(" curl openssl");
+        if always_needs_compression_deps || with_lz4() {
+            debian_packages.push("liblz4-dev");
+            macos_packages.push("lz4");
+            windows_packages.push("lz4:x64-windows");
         }
-        msg.push_str("\n\x20 Windows:       vcpkg install zstd:x64-windows lz4:x64-windows snappy:x64-windows");
+        if always_needs_compression_deps || with_snappy() {
+            debian_packages.push("libsnappy-dev");
+            macos_packages.push("snappy");
+            windows_packages.push("snappy:x64-windows");
+        }
         if with_objectstore() {
-            msg.push_str(" curl:x64-windows openssl:x64-windows");
+            debian_packages.extend(["libcurl4-openssl-dev", "libssl-dev"]);
+            macos_packages.extend(["curl", "openssl"]);
+            windows_packages.extend(["curl:x64-windows", "openssl:x64-windows"]);
+        }
+
+        if needs_compression_deps || with_objectstore() {
+            msg.push_str(&format!(
+                "\n\x20 Debian/Ubuntu: sudo apt install {}",
+                debian_packages.join(" ")
+            ));
+            msg.push_str(&format!(
+                "\n\x20 macOS:         brew install {}",
+                macos_packages.join(" ")
+            ));
+            msg.push_str(&format!(
+                "\n\x20 Windows:       vcpkg install {}",
+                windows_packages.join(" ")
+            ));
         }
         println!("{msg}");
     }
