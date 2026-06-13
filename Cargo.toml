@@ -28,7 +28,11 @@ tidesdb-src-v9-3-6 = {version = "0.1", optional = true}
 tempfile = "3.10"
 
 [features]
-default = ["v9_3_6"]
+default = ["v9_3_6", "compression"]
+compression = ["snappy", "lz4", "zstd"]
+snappy = []
+lz4 = []
+zstd = []
 objectstore = []
 v9_3_6 = ["dep:tidesdb-src-v9-3-6"]
 
