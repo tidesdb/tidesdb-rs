@@ -1,6 +1,6 @@
 [package]
 name = "tidesdb"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 authors = ["TidesDB <hello@tidesdb.com>"]
 description = "TidesDB is a high-performance embeddable, durable, adaptive, and optionally cloud-native key-value storage engine"

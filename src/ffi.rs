@@ -33,6 +33,7 @@ pub const TDB_ERR_UNKNOWN: c_int = -11;
 pub const TDB_ERR_LOCKED: c_int = -12;
 pub const TDB_ERR_READONLY: c_int = -13;
 pub const TDB_ERR_BUSY: c_int = -14;
+pub const TDB_ERR_PRECONDITION: c_int = -15;
 
 /// Object store backend identifiers (`tidesdb_objstore_backend_t`)
 pub const TDB_BACKEND_FS: c_int = 0;
@@ -326,6 +327,13 @@ pub struct tidesdb_db_stats_t {
     pub total_uploads: u64,
     pub total_upload_failures: u64,
     pub replica_mode: c_int,
+    // Added in TidesDB 9.3.8: single-writer fencing epochs (object-store mode).
+    // These sit between `replica_mode` and the write-amp counters in the C
+    // struct, so they must be gated and ordered to match the C layout exactly.
+    #[cfg(tidesdb_has_single_writer_fencing)]
+    pub primary_epoch: u64,
+    #[cfg(tidesdb_has_single_writer_fencing)]
+    pub seen_epoch: u64,
     // Added in TidesDB 9.3.4. This struct is stack-allocated by Rust before
     // passing it to C, so the tail must match C exactly to avoid overwrites.
     #[cfg(tidesdb_has_write_amp_stats)]

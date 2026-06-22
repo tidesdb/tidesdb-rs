@@ -145,6 +145,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(tidesdb_has_cancel_background_work)");
     println!("cargo:rustc-check-cfg=cfg(tidesdb_has_raise_open_file_limit)");
     println!("cargo:rustc-check-cfg=cfg(tidesdb_has_write_amp_stats)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_single_writer_fencing)");
 
     // These gates follow C API/ABI boundaries found while testing the version
     // matrix. Keeping them derived from the selected C tag avoids long feature
@@ -166,6 +167,9 @@ fn main() {
     }
     if version_at_least(&version, 9, 3, 4) {
         println!("cargo:rustc-cfg=tidesdb_has_write_amp_stats");
+    }
+    if version_at_least(&version, 9, 3, 8) {
+        println!("cargo:rustc-cfg=tidesdb_has_single_writer_fencing");
     }
 
     // tidesdb S3 connector uses POSIX-only functions (gmtime_r, fmemopen)

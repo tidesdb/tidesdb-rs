@@ -40,6 +40,8 @@ pub enum ErrorCode {
     ReadOnly,
     /// Resource is busy (another operation is in progress)
     Busy,
+    /// A required precondition was not met
+    Precondition,
 }
 
 impl ErrorCode {
@@ -59,6 +61,7 @@ impl ErrorCode {
             ffi::TDB_ERR_LOCKED => Some(ErrorCode::Locked),
             ffi::TDB_ERR_READONLY => Some(ErrorCode::ReadOnly),
             ffi::TDB_ERR_BUSY => Some(ErrorCode::Busy),
+            ffi::TDB_ERR_PRECONDITION => Some(ErrorCode::Precondition),
             _ => Some(ErrorCode::Unknown),
         }
     }
@@ -81,6 +84,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::Locked => write!(f, "database is locked"),
             ErrorCode::ReadOnly => write!(f, "database is read-only"),
             ErrorCode::Busy => write!(f, "resource is busy"),
+            ErrorCode::Precondition => write!(f, "precondition not met"),
         }
     }
 }
