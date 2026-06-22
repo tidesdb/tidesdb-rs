@@ -623,6 +623,12 @@ impl TidesDB {
             compaction_count,
         ) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
 
+        // Single-writer fencing epochs (tidesdb >= 9.3.8; 0 on older libraries).
+        #[cfg(tidesdb_has_single_writer_fencing)]
+        let (primary_epoch, seen_epoch) = (c_stats.primary_epoch, c_stats.seen_epoch);
+        #[cfg(not(tidesdb_has_single_writer_fencing))]
+        let (primary_epoch, seen_epoch) = (0u64, 0u64);
+
         let object_store_connector = if c_stats.object_store_connector.is_null() {
             String::new()
         } else {
@@ -663,6 +669,8 @@ impl TidesDB {
             total_uploads: c_stats.total_uploads,
             total_upload_failures: c_stats.total_upload_failures,
             replica_mode: c_stats.replica_mode != 0,
+            primary_epoch,
+            seen_epoch,
             uwal_bytes_written,
             wal_bytes_written,
             flush_bytes_written,

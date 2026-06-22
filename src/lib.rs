@@ -1622,10 +1622,18 @@ mod tests {
         let _ = stats.total_upload_failures;
         let _ = stats.replica_mode;
 
+        // Single-writer fencing epochs should be accessible. On a local
+        // (non-object-store) database they are 0; on libraries older than
+        // 9.3.8 they are reported as 0 as well.
+        let _ = stats.primary_epoch;
+        let _ = stats.seen_epoch;
+
         // For a non-unified, non-object-store db:
         assert!(!stats.unified_memtable_enabled);
         assert!(!stats.object_store_enabled);
         assert!(!stats.replica_mode);
+        assert_eq!(stats.primary_epoch, 0);
+        assert_eq!(stats.seen_epoch, 0);
     }
 
     #[test]
@@ -1932,6 +1940,14 @@ mod tests {
         let code = ErrorCode::from_code(-14);
         assert_eq!(code, Some(ErrorCode::Busy));
         assert_eq!(ErrorCode::Busy.to_string(), "resource is busy");
+    }
+
+    #[test]
+    fn test_error_code_precondition() {
+        // Verify the Precondition error code (-15) is recognized and rendered.
+        let code = ErrorCode::from_code(-15);
+        assert_eq!(code, Some(ErrorCode::Precondition));
+        assert_eq!(ErrorCode::Precondition.to_string(), "precondition not met");
     }
 
     #[test]

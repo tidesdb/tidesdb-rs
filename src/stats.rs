@@ -140,6 +140,12 @@ pub struct DbStats {
     pub total_upload_failures: u64,
     /// Whether running in read-only replica mode
     pub replica_mode: bool,
+    /// Single-writer fencing: lease epoch this primary currently holds (0 when not a
+    /// primary / no lease). Requires tidesdb >= 9.3.8; reported as 0 on older libraries.
+    pub primary_epoch: u64,
+    /// Single-writer fencing: highest lease epoch a replica has observed.
+    /// Requires tidesdb >= 9.3.8; reported as 0 on older libraries.
+    pub seen_epoch: u64,
     /// Framed bytes appended to the shared unified WAL (0 if unified mode off).
     /// Requires tidesdb >= 9.3.4; reported as 0 on older libraries.
     pub uwal_bytes_written: u64,
