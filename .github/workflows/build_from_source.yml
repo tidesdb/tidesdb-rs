@@ -173,6 +173,7 @@ jobs:
           "$VENV_PYTHON" scripts/sync-versions.py \
             --prepare-local-patches .cargo/tidesdb-src \
             --write-cargo-patch-config .cargo/config.toml \
+            --local-patch-archive-versions all \
             --versions current \
             --yes
 
@@ -187,6 +188,9 @@ jobs:
           toolchain: 1.85.0
 
       - name: Build from source without compression
+        run: cargo build --release --no-default-features --features v9_3_15
+
+      - name: Build retained source version without compression
         run: cargo build --release --no-default-features --features v9_3_6
 
   build-from-source-compression-gates:
@@ -195,16 +199,16 @@ jobs:
       matrix:
         include:
           - name: compression
-            features: v9_3_6,compression
+            features: v9_3_15,compression
             packages: libzstd-dev liblz4-dev libsnappy-dev
           - name: snappy
-            features: v9_3_6,snappy
+            features: v9_3_15,snappy
             packages: libsnappy-dev
           - name: lz4
-            features: v9_3_6,lz4
+            features: v9_3_15,lz4
             packages: liblz4-dev
           - name: zstd
-            features: v9_3_6,zstd
+            features: v9_3_15,zstd
             packages: libzstd-dev
 
     runs-on: ubuntu-latest

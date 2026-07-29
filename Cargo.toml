@@ -1,6 +1,6 @@
 [package]
 name = "tidesdb"
-version = "0.11.1"
+version = "0.11.2"
 edition = "2024"
 authors = ["TidesDB <hello@tidesdb.com>"]
 description = "TidesDB is a high-performance embeddable, durable, adaptive, and optionally cloud-native key-value storage engine"
@@ -23,18 +23,20 @@ flate2 = "1"
 tar = "0.4"
 cfg-if = "1"
 tidesdb-src-v9-3-6 = {version = "0.1", optional = true}
+tidesdb-src-v9-3-15 = {version = "0.1", optional = true}
 
 [dev-dependencies]
 tempfile = "3.10"
 
 [features]
-default = ["v9_3_6", "compression"]
+default = ["compression", "v9_3_15"]
 compression = ["snappy", "lz4", "zstd"]
 snappy = []
 lz4 = []
 zstd = []
 objectstore = []
 v9_3_6 = ["dep:tidesdb-src-v9-3-6"]
+v9_3_15 = ["dep:tidesdb-src-v9-3-15"]
 
 [lib]
 name = "tidesdb"
