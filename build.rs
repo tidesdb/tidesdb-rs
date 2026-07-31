@@ -24,7 +24,7 @@ fn selected_version() -> String {
     }
     match selected {
         Some((a, b, c)) => format!("{a}.{b}.{c}"),
-        None => "9.3.6".to_string(),
+        None => "9.3.15".to_string(),
     }
 }
 
@@ -42,7 +42,12 @@ fn version_at_least(version: &str, major: u32, minor: u32, patch: u32) -> bool {
 
 // BEGIN GENERATED TIDESDB SOURCE ARCHIVES
 cfg_if::cfg_if! {
-    if #[cfg(feature = "v9_3_6")] {
+    if #[cfg(feature = "v9_3_15")] {
+        fn source_archive() -> PathBuf {
+            tidesdb_src_v9_3_15::archive_path()
+        }
+    }
+    else if #[cfg(feature = "v9_3_6")] {
         fn source_archive() -> PathBuf {
             tidesdb_src_v9_3_6::archive_path()
         }
