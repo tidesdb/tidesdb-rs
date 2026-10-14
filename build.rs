@@ -3,127 +3,421 @@
 //
 // Licensed under the Mozilla Public License, v. 2.0 (the "License");
 
-use std::path::PathBuf;
+//! Links the TidesDB C library.
+//!
+//! The crate's major version maps to a TidesDB major: crate N.x binds TidesDB (N+9).x, so
+//! 1.x binds TidesDB 10.x and 2.x will bind TidesDB 11.x. A system install found through
+//! pkg-config is used when it belongs to that major and is at least the bundled release;
+//! anything else is ignored with a warning, and the source bundled in `tidesdb/` (a git
+//! submodule pinned to `TIDESDB_VERSION`) is built with CMake and linked statically.
 
-/// Derives the tidesdb version from enabled `v*` Cargo features.
-/// Feature `v9_0_5` maps to version `9.0.5`. When multiple version features
-/// are enabled (e.g. via dependency unification), the highest is selected.
-fn selected_version() -> String {
-    let mut selected: Option<(u32, u32, u32)> = None;
-    for (key, _) in std::env::vars() {
-        if let Some(feature) = key.strip_prefix("CARGO_FEATURE_V") {
-            let parts: Vec<u32> = feature.split('_').filter_map(|s| s.parse().ok()).collect();
-            if let [a, b, c] = parts.as_slice() {
-                let v = (*a, *b, *c);
-                selected = Some(match selected {
-                    Some(prev) if prev >= v => prev,
-                    _ => v,
-                });
+use std::path::{Path, PathBuf};
+
+/// The TidesDB release the bindings in src/ffi.rs were written against and the submodule is
+/// pinned to. Must match `TIDESDB_VERSION` in src/ffi.rs.
+const TIDESDB_VERSION: &str = "10.2.1";
+
+/// Crate major N binds TidesDB major N + this.
+const TIDESDB_MAJOR_OFFSET: u64 = 9;
+
+fn feature(name: &str) -> bool {
+    std::env::var(format!("CARGO_FEATURE_{}", name.to_uppercase())).is_ok()
+}
+
+fn on_off(enabled: bool) -> &'static str {
+    if enabled { "ON" } else { "OFF" }
+}
+
+/// `major.minor.patch`, ignoring any suffix; missing parts are 0.
+fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = v.trim().split(['.', '-', '+']).map(|p| p.parse::<u64>());
+    let major = parts.next()?.ok()?;
+    let minor = parts.next().and_then(|p| p.ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|p| p.ok()).unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// The TidesDB major this crate version binds, checked against `TIDESDB_VERSION`.
+fn tidesdb_major() -> u64 {
+    let crate_version = env!("CARGO_PKG_VERSION");
+    let crate_major: u64 = env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap();
+    let major = crate_major + TIDESDB_MAJOR_OFFSET;
+    let bound = parse_version(TIDESDB_VERSION).unwrap().0;
+    assert_eq!(
+        major, bound,
+        "tidesdb crate {crate_version} must bind TidesDB {major}.x (crate N.x binds TidesDB \
+         (N+{TIDESDB_MAJOR_OFFSET}).x), but build.rs pins TidesDB {TIDESDB_VERSION}. Bump the \
+         crate major or the pinned release so they agree."
+    );
+    major
+}
+
+fn bundled_source() -> PathBuf {
+    let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("tidesdb");
+    let cmake_lists = dir.join("CMakeLists.txt");
+    let Ok(text) = std::fs::read_to_string(&cmake_lists) else {
+        panic!(
+            "TidesDB source not found at {}. In a git checkout run \
+             `git submodule update --init`, or install TidesDB {TIDESDB_VERSION} (or a later \
+             {}.x) with a pkg-config file.",
+            dir.display(),
+            parse_version(TIDESDB_VERSION).unwrap().0
+        );
+    };
+
+    // project(tidesdb VERSION x.y.z ...) -- the submodule must be checked out at the pinned tag
+    let found = text
+        .lines()
+        .position(|l| l.trim_start().starts_with("project("))
+        .and_then(|start| {
+            let call: String = text.lines().skip(start).collect::<Vec<_>>().join(" ");
+            let call = call.split(')').next()?.to_string();
+            let mut words = call.split_whitespace().skip_while(|w| *w != "VERSION");
+            words.nth(1).map(str::to_string)
+        });
+    if found.as_deref() != Some(TIDESDB_VERSION) {
+        panic!(
+            "the bundled TidesDB source at {} is version {}, but this crate binds TidesDB \
+             {TIDESDB_VERSION}. Check out the pinned release: \
+             `git -C tidesdb checkout v{TIDESDB_VERSION}`.",
+            dir.display(),
+            found.as_deref().unwrap_or("unknown")
+        );
+    }
+    dir
+}
+
+fn build_from_source(src: &Path) -> PathBuf {
+    let mut cfg = cmake::Config::new(src);
+    cfg.define("TIDESDB_BUILD_TESTS", "OFF")
+        .define("TIDESDB_BUILD_BENCH", "OFF")
+        .define("TIDESDB_BUILD_FUZZERS", "OFF")
+        .define("TIDESDB_WARN_STRICT", "OFF")
+        .define("BUILD_SHARED_LIBS", "OFF")
+        // set explicitly: the C build picks a platform-dependent default for Snappy
+        .define("TIDESDB_WITH_SNAPPY", on_off(feature("snappy")))
+        .define("TIDESDB_WITH_LZ4", on_off(feature("lz4")))
+        .define("TIDESDB_WITH_ZSTD", on_off(feature("zstd")))
+        // allocators only change what the final binary links (see link_allocator), so the
+        // static archive is the same either way; keep CMake from probing for them
+        .define("TIDESDB_WITH_JEMALLOC", "OFF")
+        .define("TIDESDB_WITH_MIMALLOC", "OFF")
+        .define("TIDESDB_WITH_TCMALLOC", "OFF");
+    cfg.build()
+}
+
+/// A system library: pkg-config names to try, the name to link when none is found, and the
+/// package to suggest for Debian/Ubuntu, Homebrew and vcpkg.
+struct SysLib {
+    pkg: &'static [&'static str],
+    lib: &'static str,
+    debian: &'static str,
+    brew: &'static str,
+    vcpkg: &'static str,
+}
+
+/// Link each library through pkg-config, falling back to linking it by name with a warning
+/// that lists how to install the ones that were not found.
+fn link_system_libs(what: &str, libs: &[SysLib]) {
+    let missing: Vec<&SysLib> = libs
+        .iter()
+        .filter(|l| !l.pkg.iter().any(|p| pkg_config::probe_library(p).is_ok()))
+        .collect();
+    for l in &missing {
+        println!("cargo:rustc-link-lib={}", l.lib);
+    }
+    if !missing.is_empty() {
+        let names: Vec<_> = missing.iter().map(|l| l.lib).collect();
+        let join = |f: fn(&SysLib) -> &'static str| {
+            missing.iter().map(|l| f(l)).collect::<Vec<_>>().join(" ")
+        };
+        println!(
+            "cargo:warning=Could not find {what} {} via pkg-config, falling back to link by \
+             name. If linking fails, install them:\
+             \n\x20 Debian/Ubuntu: sudo apt install {}\
+             \n\x20 macOS:         brew install {}\
+             \n\x20 Windows:       vcpkg install {}",
+            names.join(", "),
+            join(|l| l.debian),
+            join(|l| l.brew),
+            join(|l| l.vcpkg),
+        );
+    }
+}
+
+fn link_compression_deps() {
+    let mut libs = Vec::new();
+    if feature("zstd") {
+        libs.push(SysLib {
+            pkg: &["libzstd"],
+            lib: "zstd",
+            debian: "libzstd-dev",
+            brew: "zstd",
+            vcpkg: "zstd:x64-windows",
+        });
+    }
+    if feature("lz4") {
+        libs.push(SysLib {
+            pkg: &["liblz4"],
+            lib: "lz4",
+            debian: "liblz4-dev",
+            brew: "lz4",
+            vcpkg: "lz4:x64-windows",
+        });
+    }
+    if feature("snappy") {
+        libs.push(SysLib {
+            pkg: &["snappy"],
+            lib: "snappy",
+            debian: "libsnappy-dev",
+            brew: "snappy",
+            vcpkg: "snappy:x64-windows",
+        });
+    }
+    link_system_libs("compression libraries", &libs);
+}
+
+/// Link the alternative allocator selected by a feature. Like TidesDB's own
+/// `TIDESDB_WITH_*ALLOC` CMake options, this only links the allocator: it replaces
+/// `malloc`/`free` for the whole process, the Rust side included.
+fn link_allocator() {
+    let selected: Vec<&str> = ["jemalloc", "mimalloc", "tcmalloc"]
+        .into_iter()
+        .filter(|f| feature(f))
+        .collect();
+    if selected.len() > 1 {
+        panic!(
+            "the tidesdb features {} each replace the process allocator; enable at most one",
+            selected.join(", ")
+        );
+    }
+    let Some(&alloc) = selected.first() else {
+        return;
+    };
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    if windows && alloc != "mimalloc" {
+        panic!("the tidesdb `{alloc}` feature is not supported on Windows; use `mimalloc`");
+    }
+    let lib = match alloc {
+        "jemalloc" => SysLib {
+            pkg: &["jemalloc"],
+            lib: "jemalloc",
+            debian: "libjemalloc-dev",
+            brew: "jemalloc",
+            vcpkg: "jemalloc:x64-windows",
+        },
+        "mimalloc" => SysLib {
+            pkg: &["mimalloc"],
+            lib: "mimalloc",
+            debian: "libmimalloc-dev",
+            brew: "mimalloc",
+            vcpkg: "mimalloc:x64-windows",
+        },
+        _ => SysLib {
+            pkg: &["libtcmalloc", "libtcmalloc_minimal"],
+            lib: "tcmalloc",
+            debian: "libgoogle-perftools-dev",
+            brew: "gperftools",
+            vcpkg: "gperftools:x64-windows",
+        },
+    };
+    link_system_libs("allocator", &[lib]);
+}
+
+/// Use a TidesDB found through pkg-config if it belongs to the bound major and is at least the
+/// bundled release. Returns the version linked, or `None` to build the bundled source.
+/// The `.pc` file pkg-config resolves `name` to.
+fn pc_file(name: &str) -> Option<PathBuf> {
+    let pkg_config = std::env::var("PKG_CONFIG").unwrap_or_else(|_| "pkg-config".into());
+    let out = std::process::Command::new(pkg_config)
+        .args(["--variable=pcfiledir", name])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let pc = PathBuf::from(dir).join(format!("{name}.pc"));
+    pc.exists().then_some(pc)
+}
+
+fn system_tidesdb(major: u64) -> Option<String> {
+    if std::env::var_os("TIDESDB_NO_PKG_CONFIG").is_some() {
+        return None;
+    }
+    // link metadata only once the version is accepted, but rerun when PKG_CONFIG_* changes
+    let found = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .env_metadata(true)
+        .probe("tidesdb")
+        .ok()?;
+    // rebuild when the installed TidesDB changes (an upgrade rewrites its .pc file)
+    if let Some(pc) = pc_file("tidesdb") {
+        println!("cargo:rerun-if-changed={}", pc.display());
+    }
+    let crate_version = env!("CARGO_PKG_VERSION");
+    let crate_major = major - TIDESDB_MAJOR_OFFSET;
+    let usable = match parse_version(&found.version) {
+        Some(v) => v.0 == major && v >= parse_version(TIDESDB_VERSION).unwrap(),
+        None => false,
+    };
+    if !usable {
+        println!(
+            "cargo:warning=Ignoring the system TidesDB {} found via pkg-config: tidesdb crate \
+             {crate_version} binds TidesDB {major}.x (at least {TIDESDB_VERSION}). Crate \
+             {crate_major}.x maps to TidesDB {major}.x, crate {}.x to TidesDB {}.x. Building the \
+             bundled TidesDB {TIDESDB_VERSION} instead.",
+            found.version,
+            crate_major + 1,
+            major + 1,
+        );
+        return None;
+    }
+
+    // probe again, this time emitting the link metadata
+    let lib = pkg_config::Config::new()
+        .range_version(found.version.as_str()..=found.version.as_str())
+        .probe("tidesdb")
+        .ok()?;
+    if lib.version != TIDESDB_VERSION {
+        println!(
+            "cargo:warning=Linking the system TidesDB {} found via pkg-config. The bindings \
+             were written against TidesDB {TIDESDB_VERSION}; set TIDESDB_NO_PKG_CONFIG=1 to \
+             build the bundled {TIDESDB_VERSION} instead.",
+            lib.version
+        );
+    }
+    if feature("snappy") || feature("lz4") || feature("zstd") {
+        println!(
+            "cargo:warning=The tidesdb compression features do not change a system TidesDB: it \
+             has whichever codecs it was built with. Check CompressionAlgorithm::is_available."
+        );
+    }
+    Some(lib.version)
+}
+
+/// The width of the C `time_t` on the target, in bits, asked of the target's C compiler.
+///
+/// It is not fixed per target: 32-bit glibc targets have a 32-bit `time_t` by default but a
+/// 64-bit one where the toolchain defines `_TIME_BITS=64` (Debian and Ubuntu armhf since the
+/// 64-bit time transition), while Rust's `libc::time_t` stays 32-bit. `time_t` is a field of
+/// `tidesdb_commit_op_t` and a TTL parameter, so the bindings must match the compiler that
+/// built TidesDB. Each candidate is checked with a compile-time assertion, so this also works
+/// when cross-compiling.
+fn c_time_t_bits() -> u32 {
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    for bits in [64u32, 32] {
+        let probe = out.join(format!("time_t_{bits}.c"));
+        std::fs::write(
+            &probe,
+            format!(
+                "#include <time.h>\n\
+                 typedef char tidesdb_time_t_probe[sizeof(time_t) == {} ? 1 : -1];\n",
+                bits / 8
+            ),
+        )
+        .unwrap();
+        let compiled = cc::Build::new()
+            .file(&probe)
+            .cargo_metadata(false)
+            .cargo_warnings(false)
+            .warnings(false)
+            .try_compile_intermediates();
+        if compiled.is_ok() {
+            return bits;
+        }
+    }
+    panic!("could not determine the size of the C time_t for this target");
+}
+
+/// The platform the crate is being built for, from Cargo's target cfg. A build script's own
+/// `#[cfg(...)]` describes the machine running the build, which differs when cross-compiling.
+struct Target {
+    os: String,
+    family: String,
+    env: String,
+    pointer_width: String,
+    /// Whether the build runs on the target platform itself (not cross-compiling)
+    native: bool,
+}
+
+impl Target {
+    fn from_env() -> Self {
+        let var = |k: &str| std::env::var(k).unwrap_or_default();
+        Target {
+            os: var("CARGO_CFG_TARGET_OS"),
+            family: var("CARGO_CFG_TARGET_FAMILY"),
+            env: var("CARGO_CFG_TARGET_ENV"),
+            pointer_width: var("CARGO_CFG_TARGET_POINTER_WIDTH"),
+            native: var("HOST") == var("TARGET"),
+        }
+    }
+}
+
+/// The system libraries the static TidesDB needs, following the per-platform link recipe in
+/// TidesDB's CMakeLists.txt.
+fn link_platform_libs(target: &Target) {
+    let link = |lib: &str| println!("cargo:rustc-link-lib={lib}");
+    match target.os.as_str() {
+        // MSVC uses the native Win32 threads in compat.h; MinGW links winpthreads
+        "windows" => {
+            if target.env == "gnu" {
+                link("pthread");
             }
         }
-    }
-    match selected {
-        Some((a, b, c)) => format!("{a}.{b}.{c}"),
-        None => "9.3.15".to_string(),
-    }
-}
-
-fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
-    let parts: Vec<u32> = version.split('.').filter_map(|s| s.parse().ok()).collect();
-    match parts.as_slice() {
-        [a, b, c] => Some((*a, *b, *c)),
-        _ => None,
-    }
-}
-
-fn version_at_least(version: &str, major: u32, minor: u32, patch: u32) -> bool {
-    parse_version(version).is_some_and(|v| v >= (major, minor, patch))
-}
-
-// BEGIN GENERATED TIDESDB SOURCE ARCHIVES
-cfg_if::cfg_if! {
-    if #[cfg(feature = "v9_3_15")] {
-        fn source_archive() -> PathBuf {
-            tidesdb_src_v9_3_15::archive_path()
+        // Bionic has pthreads and libm in libc and ships no libpthread
+        "android" => link("m"),
+        "macos" | "ios" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" | "solaris"
+        | "illumos" => {
+            link("m");
+            link("pthread");
         }
-    }
-    else if #[cfg(feature = "v9_3_6")] {
-        fn source_archive() -> PathBuf {
-            tidesdb_src_v9_3_6::archive_path()
+        _ if target.family == "unix" => {
+            link("pthread");
+            link("m");
+            // 64-bit atomics on 32-bit targets (ARMv7, PowerPC, MIPS, x86) live in libatomic
+            if target.pointer_width == "32" {
+                link("atomic");
+            }
+            // Snappy is C++; its C++ runtime comes along when Snappy is enabled
+            if feature("snappy") {
+                link("stdc++");
+            }
         }
+        _ => {}
     }
-    else {
-        fn source_archive() -> PathBuf {
-            panic!("no tidesdb source crate is enabled; enable a vX_Y_Z feature")
+}
+
+/// Library directories of the build machine's package managers, where the codec and
+/// allocator libraries usually live. Only added for native builds: when cross-compiling
+/// they hold libraries for the wrong platform, and the target's libraries are found through
+/// pkg-config (`PKG_CONFIG_SYSROOT_DIR`, `PKG_CONFIG_ALLOW_CROSS`) or `RUSTFLAGS="-L ..."`.
+fn link_host_search_paths(target: &Target) {
+    if !target.native {
+        return;
+    }
+    let search = |dir: &str| println!("cargo:rustc-link-search=native={dir}");
+    match target.os.as_str() {
+        "macos" => match brew_prefix() {
+            Some(prefix) => search(&format!("{prefix}/lib")),
+            None => {
+                search("/opt/homebrew/lib");
+                search("/usr/local/lib");
+            }
+        },
+        "windows" => {
+            // MSYS2 shells set MINGW_PREFIX as a POSIX path (/mingw64); the native linker
+            // needs it under the default MSYS2 root
+            if target.env == "gnu" {
+                let prefix = std::env::var("MINGW_PREFIX").unwrap_or_else(|_| "/mingw64".into());
+                match prefix.strip_prefix('/') {
+                    Some(rest) => search(&format!("C:/msys64/{rest}/lib")),
+                    None => search(&format!("{prefix}/lib")),
+                }
+            }
         }
+        "netbsd" => search("/usr/pkg/lib"),
+        "solaris" | "illumos" => search("/opt/ooce/lib/amd64"),
+        _ => search("/usr/local/lib"),
     }
-}
-
-// END GENERATED TIDESDB SOURCE ARCHIVES
-
-fn extract_archive(version: &str, out_dir: &str) -> PathBuf {
-    let archive_path = source_archive();
-    let extract_dir = PathBuf::from(out_dir).join("tidesdb-source");
-    let src_dir = extract_dir.join(format!("tidesdb-{version}"));
-
-    if src_dir.exists() {
-        return src_dir;
-    }
-
-    let tarball = std::fs::File::open(&archive_path).unwrap_or_else(|e| {
-        panic!(
-            "failed to open TidesDB v{version} source archive {}: {e}",
-            archive_path.display()
-        )
-    });
-    let decoder = flate2::read::GzDecoder::new(tarball);
-    let mut archive = tar::Archive::new(decoder);
-    std::fs::create_dir_all(&extract_dir).expect("Failed to create extract directory");
-    archive
-        .unpack(&extract_dir)
-        .expect("Failed to extract TidesDB source archive");
-
-    src_dir
-}
-
-fn with_objectstore() -> bool {
-    std::env::var("CARGO_FEATURE_OBJECTSTORE").is_ok()
-}
-
-fn with_snappy() -> bool {
-    std::env::var("CARGO_FEATURE_SNAPPY").is_ok()
-}
-
-fn with_lz4() -> bool {
-    std::env::var("CARGO_FEATURE_LZ4").is_ok()
-}
-
-fn with_zstd() -> bool {
-    std::env::var("CARGO_FEATURE_ZSTD").is_ok()
-}
-
-fn build_from_source(version: &str) -> PathBuf {
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    let src_dir = extract_archive(version, &out_dir);
-
-    let mut cfg = cmake::Config::new(&src_dir);
-    cfg.define("TIDESDB_BUILD_TESTS", "OFF")
-        .define("BUILD_SHARED_LIBS", "OFF");
-
-    if version_at_least(version, 9, 3, 4) {
-        cfg.define(
-            "TIDESDB_WITH_SNAPPY",
-            if with_snappy() { "ON" } else { "OFF" },
-        )
-        .define("TIDESDB_WITH_LZ4", if with_lz4() { "ON" } else { "OFF" })
-        .define("TIDESDB_WITH_ZSTD", if with_zstd() { "ON" } else { "OFF" });
-    }
-
-    if with_objectstore() {
-        cfg.define("TIDESDB_WITH_S3", "ON");
-    }
-
-    cfg.build()
 }
 
 fn brew_prefix() -> Option<String> {
@@ -135,177 +429,38 @@ fn brew_prefix() -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
-#[cfg(target_os = "windows")]
-fn version_less_than(version: &str, major: u32, minor: u32, patch: u32) -> bool {
-    !version_at_least(version, major, minor, patch)
-}
-
 fn main() {
-    let version = selected_version();
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=tidesdb/include/db.h");
+    println!("cargo:rerun-if-changed=tidesdb/CMakeLists.txt");
+    println!("cargo:rerun-if-env-changed=TIDESDB_NO_PKG_CONFIG");
+    println!("cargo:rerun-if-env-changed=MINGW_PREFIX");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_system)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_time_t_32)");
 
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_txn_single_delete)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_compact_range)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_max_concurrent_flushes)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_tombstone_stats)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_cancel_background_work)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_raise_open_file_limit)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_write_amp_stats)");
-    println!("cargo:rustc-check-cfg=cfg(tidesdb_has_single_writer_fencing)");
+    let major = tidesdb_major();
+    let target = Target::from_env();
 
-    // These gates follow C API/ABI boundaries found while testing the version
-    // matrix. Keeping them derived from the selected C tag avoids long feature
-    // lists and prevents Rust FFI structs from reading fields older tags do not
-    // expose.
-    if version_at_least(&version, 9, 1, 0) {
-        println!("cargo:rustc-cfg=tidesdb_has_txn_single_delete");
-    }
-    if version_at_least(&version, 9, 2, 0) {
-        println!("cargo:rustc-cfg=tidesdb_has_compact_range");
-        println!("cargo:rustc-cfg=tidesdb_has_max_concurrent_flushes");
-        println!("cargo:rustc-cfg=tidesdb_has_tombstone_stats");
-    }
-    if version_at_least(&version, 9, 3, 2) {
-        println!("cargo:rustc-cfg=tidesdb_has_cancel_background_work");
-    }
-    if version_at_least(&version, 9, 3, 3) {
-        println!("cargo:rustc-cfg=tidesdb_has_raise_open_file_limit");
-    }
-    if version_at_least(&version, 9, 3, 4) {
-        println!("cargo:rustc-cfg=tidesdb_has_write_amp_stats");
-    }
-    if version_at_least(&version, 9, 3, 8) {
-        println!("cargo:rustc-cfg=tidesdb_has_single_writer_fencing");
+    if c_time_t_bits() == 32 {
+        println!("cargo:rustc-cfg=tidesdb_time_t_32");
     }
 
-    // tidesdb S3 connector uses POSIX-only functions (gmtime_r, fmemopen)
-    // that were not available on Windows until v9.0.6
-    #[cfg(target_os = "windows")]
-    if with_objectstore() && version_less_than(&version, 9, 0, 6) {
-        panic!(
-            "The `objectstore` feature requires tidesdb >= 9.0.6 on Windows. \
-             Versions before 9.0.6 use POSIX-only functions (gmtime_r, fmemopen)."
-        );
-    }
-
-    // Try pkg-config with exact version match
-    if pkg_config::Config::new()
-        .exactly_version(&version)
-        .probe("tidesdb")
-        .is_ok()
-    {
+    if let Some(version) = system_tidesdb(major) {
+        println!("cargo:rustc-cfg=tidesdb_system");
+        println!("cargo:rustc-env=TIDESDB_LINKED_VERSION={version}");
+        link_allocator();
+        link_host_search_paths(&target);
         return;
     }
 
-    // Build from source
-    let dst = build_from_source(&version);
-
+    let dst = build_from_source(&bundled_source());
+    println!("cargo:rustc-env=TIDESDB_LINKED_VERSION={TIDESDB_VERSION}");
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
+    println!("cargo:rustc-link-search=native={}/lib64", dst.display());
     println!("cargo:rustc-link-lib=static=tidesdb");
 
-    let mut missing = Vec::new();
-    let compression_deps = [
-        ("libzstd", "zstd", with_zstd()),
-        ("liblz4", "lz4", with_lz4()),
-        ("snappy", "snappy", with_snappy()),
-    ];
-    let always_needs_compression_deps = !version_at_least(&version, 9, 3, 4);
-
-    if always_needs_compression_deps || compression_deps.iter().any(|(_, _, enabled)| *enabled) {
-        // Older TidesDB releases always compile compression backends into the C
-        // library. v9.3.4+ can gate each optional codec independently.
-        for (dep, lib_name, enabled) in compression_deps {
-            if !always_needs_compression_deps && !enabled {
-                continue;
-            }
-            if pkg_config::probe_library(dep).is_err() {
-                println!("cargo:rustc-link-lib={lib_name}");
-                missing.push(lib_name);
-            }
-        }
-    }
-    // Link S3/object store dependencies (libcurl + openssl)
-    if with_objectstore() {
-        if pkg_config::probe_library("libcurl").is_err() {
-            println!("cargo:rustc-link-lib=curl");
-            missing.push("curl");
-        }
-        if pkg_config::probe_library("openssl").is_err() {
-            println!("cargo:rustc-link-lib=ssl");
-            println!("cargo:rustc-link-lib=crypto");
-            missing.push("ssl/crypto");
-        }
-    }
-
-    if !missing.is_empty() {
-        let mut msg = format!(
-            "cargo:warning=Could not find {} via pkg-config, falling back to link by name. \
-             If linking fails, install them:",
-            missing.join(", ")
-        );
-        let needs_compression_deps =
-            always_needs_compression_deps || with_snappy() || with_lz4() || with_zstd();
-
-        let mut debian_packages = Vec::new();
-        let mut macos_packages = Vec::new();
-        let mut windows_packages = Vec::new();
-
-        if always_needs_compression_deps || with_zstd() {
-            debian_packages.push("libzstd-dev");
-            macos_packages.push("zstd");
-            windows_packages.push("zstd:x64-windows");
-        }
-        if always_needs_compression_deps || with_lz4() {
-            debian_packages.push("liblz4-dev");
-            macos_packages.push("lz4");
-            windows_packages.push("lz4:x64-windows");
-        }
-        if always_needs_compression_deps || with_snappy() {
-            debian_packages.push("libsnappy-dev");
-            macos_packages.push("snappy");
-            windows_packages.push("snappy:x64-windows");
-        }
-        if with_objectstore() {
-            debian_packages.extend(["libcurl4-openssl-dev", "libssl-dev"]);
-            macos_packages.extend(["curl", "openssl"]);
-            windows_packages.extend(["curl:x64-windows", "openssl:x64-windows"]);
-        }
-
-        if needs_compression_deps || with_objectstore() {
-            msg.push_str(&format!(
-                "\n\x20 Debian/Ubuntu: sudo apt install {}",
-                debian_packages.join(" ")
-            ));
-            msg.push_str(&format!(
-                "\n\x20 macOS:         brew install {}",
-                macos_packages.join(" ")
-            ));
-            msg.push_str(&format!(
-                "\n\x20 Windows:       vcpkg install {}",
-                windows_packages.join(" ")
-            ));
-        }
-        println!("{msg}");
-    }
-
-    // Platform-specific dependencies
-    #[cfg(unix)]
-    {
-        println!("cargo:rustc-link-lib=pthread");
-    }
-
-    // Add library search paths
-    if let Some(prefix) = brew_prefix() {
-        println!("cargo:rustc-link-search=native={prefix}/lib");
-    } else {
-        println!("cargo:rustc-link-search=native=/usr/local/lib");
-        println!("cargo:rustc-link-search=native=/usr/lib");
-        #[cfg(target_os = "macos")]
-        {
-            println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
-        }
-        #[cfg(target_os = "windows")]
-        {
-            println!("cargo:rustc-link-search=native=C:/msys64/mingw64/lib");
-        }
-    }
+    link_compression_deps();
+    link_allocator();
+    link_platform_libs(&target);
+    link_host_search_paths(&target);
 }

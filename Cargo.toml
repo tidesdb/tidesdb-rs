@@ -1,9 +1,10 @@
 [package]
 name = "tidesdb"
-version = "0.11.2"
+version = "1.0.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["TidesDB <hello@tidesdb.com>"]
-description = "TidesDB is a high-performance embeddable, durable, adaptive, and optionally cloud-native key-value storage engine"
+description = "TidesDB is a high-performance embeddable, durable, adaptive key-value storage engine"
 license = "MPL-2.0"
 repository = "https://github.com/tidesdb/tidesdb-rs"
 homepage = "https://tidesdb.com"
@@ -11,6 +12,23 @@ documentation = "https://tidesdb.com/reference/rust/"
 readme = "README.md"
 keywords = ["database", "key-value", "storage", "lsm-tree", "storageengine"]
 categories = ["database", "data-structures"]
+# The C library is linked exactly once per build; two versions of this crate cannot coexist.
+links = "tidesdb"
+# The bundled TidesDB source (git submodule at tidesdb/, pinned to the release in
+# src/ffi.rs TIDESDB_VERSION) ships inside the package; only what the library build needs.
+include = [
+    "/src/**",
+    "/build.rs",
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE",
+    "/tidesdb/CMakeLists.txt",
+    "/tidesdb/LICENSE",
+    "/tidesdb/cmake/**",
+    "/tidesdb/include/**",
+    "/tidesdb/src/**",
+    "/tidesdb/external/**",
+]
 
 [dependencies]
 libc = "0.2"
@@ -19,24 +37,24 @@ thiserror = "1.0"
 [build-dependencies]
 pkg-config = "0.3"
 cmake = "0.1"
-flate2 = "1"
-tar = "0.4"
-cfg-if = "1"
-tidesdb-src-v9-3-6 = {version = "0.1", optional = true}
-tidesdb-src-v9-3-15 = {version = "0.1", optional = true}
+cc = "1"
 
 [dev-dependencies]
 tempfile = "3.10"
 
 [features]
-default = ["compression", "v9_3_15"]
+# TidesDB needs no compression library; each codec is opt-in and links its system library.
+default = []
 compression = ["snappy", "lz4", "zstd"]
 snappy = []
 lz4 = []
 zstd = []
-objectstore = []
-v9_3_6 = ["dep:tidesdb-src-v9-3-6"]
-v9_3_15 = ["dep:tidesdb-src-v9-3-15"]
+# Alternative allocators, at most one. Each links the system library, which replaces
+# malloc/free for the whole process (TidesDB and Rust alike), as TidesDB's own
+# TIDESDB_WITH_*ALLOC CMake options do.
+jemalloc = []
+mimalloc = []
+tcmalloc = []
 
 [lib]
 name = "tidesdb"

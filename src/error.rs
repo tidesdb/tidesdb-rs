@@ -6,11 +6,15 @@
 //! Error types for TidesDB operations.
 
 use crate::ffi;
+use std::ffi::CStr;
 use std::fmt;
 use thiserror::Error;
 
 /// Error codes returned by TidesDB operations.
+///
+/// New codes may be added in minor releases, so match with a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorCode {
     /// Memory allocation failed
     Memory,
@@ -24,68 +28,85 @@ pub enum ErrorCode {
     Corruption,
     /// Resource already exists
     Exists,
-    /// Transaction conflict
+    /// Transaction conflict: another transaction committed a conflicting write first
     Conflict,
-    /// Key or value too large
+    /// A value does not fit the space that has to hold it
     TooLarge,
     /// Memory limit exceeded
     MemoryLimit,
-    /// Invalid database handle
+    /// Invalid database handle, or the database is closing
     InvalidDb,
     /// Unknown error
     Unknown,
-    /// Database is locked
+    /// Transient contention. Nothing was written and the operation should be retried;
+    /// it never means absence or data loss.
     Locked,
     /// Database is in read-only mode
     ReadOnly,
-    /// Resource is busy (another operation is in progress)
-    Busy,
-    /// A required precondition was not met
-    Precondition,
+    /// The transaction outlived its timeout and was aborted
+    TxnExpired,
+    /// The device or filesystem is out of space; the operation succeeds once space is freed
+    NoSpace,
+    /// The transaction was aborted from another thread with
+    /// [`AbortHandle::request_abort`](crate::AbortHandle::request_abort)
+    TxnAborted,
+    /// The requested point in time is no longer reconstructable
+    TooOld,
 }
 
 impl ErrorCode {
-    /// Convert from a C error code
-    pub fn from_code(code: i32) -> Option<Self> {
+    /// Convert from a C error code. Unrecognised codes map to [`ErrorCode::Unknown`].
+    pub fn from_code(code: i32) -> Self {
         match code {
-            ffi::TDB_ERR_MEMORY => Some(ErrorCode::Memory),
-            ffi::TDB_ERR_INVALID_ARGS => Some(ErrorCode::InvalidArgs),
-            ffi::TDB_ERR_NOT_FOUND => Some(ErrorCode::NotFound),
-            ffi::TDB_ERR_IO => Some(ErrorCode::Io),
-            ffi::TDB_ERR_CORRUPTION => Some(ErrorCode::Corruption),
-            ffi::TDB_ERR_EXISTS => Some(ErrorCode::Exists),
-            ffi::TDB_ERR_CONFLICT => Some(ErrorCode::Conflict),
-            ffi::TDB_ERR_TOO_LARGE => Some(ErrorCode::TooLarge),
-            ffi::TDB_ERR_MEMORY_LIMIT => Some(ErrorCode::MemoryLimit),
-            ffi::TDB_ERR_INVALID_DB => Some(ErrorCode::InvalidDb),
-            ffi::TDB_ERR_LOCKED => Some(ErrorCode::Locked),
-            ffi::TDB_ERR_READONLY => Some(ErrorCode::ReadOnly),
-            ffi::TDB_ERR_BUSY => Some(ErrorCode::Busy),
-            ffi::TDB_ERR_PRECONDITION => Some(ErrorCode::Precondition),
-            _ => Some(ErrorCode::Unknown),
+            ffi::TDB_ERR_MEMORY => ErrorCode::Memory,
+            ffi::TDB_ERR_INVALID_ARGS => ErrorCode::InvalidArgs,
+            ffi::TDB_ERR_NOT_FOUND => ErrorCode::NotFound,
+            ffi::TDB_ERR_IO => ErrorCode::Io,
+            ffi::TDB_ERR_CORRUPTION => ErrorCode::Corruption,
+            ffi::TDB_ERR_EXISTS => ErrorCode::Exists,
+            ffi::TDB_ERR_CONFLICT => ErrorCode::Conflict,
+            ffi::TDB_ERR_TOO_LARGE => ErrorCode::TooLarge,
+            ffi::TDB_ERR_MEMORY_LIMIT => ErrorCode::MemoryLimit,
+            ffi::TDB_ERR_INVALID_DB => ErrorCode::InvalidDb,
+            ffi::TDB_ERR_LOCKED => ErrorCode::Locked,
+            ffi::TDB_ERR_READONLY => ErrorCode::ReadOnly,
+            ffi::TDB_ERR_TXN_EXPIRED => ErrorCode::TxnExpired,
+            ffi::TDB_ERR_NO_SPACE => ErrorCode::NoSpace,
+            ffi::TDB_ERR_TXN_ABORTED => ErrorCode::TxnAborted,
+            ffi::TDB_ERR_TOO_OLD => ErrorCode::TooOld,
+            _ => ErrorCode::Unknown,
+        }
+    }
+
+    /// The C error code (`TDB_ERR_*`) this variant corresponds to.
+    pub fn code(self) -> i32 {
+        match self {
+            ErrorCode::Memory => ffi::TDB_ERR_MEMORY,
+            ErrorCode::InvalidArgs => ffi::TDB_ERR_INVALID_ARGS,
+            ErrorCode::NotFound => ffi::TDB_ERR_NOT_FOUND,
+            ErrorCode::Io => ffi::TDB_ERR_IO,
+            ErrorCode::Corruption => ffi::TDB_ERR_CORRUPTION,
+            ErrorCode::Exists => ffi::TDB_ERR_EXISTS,
+            ErrorCode::Conflict => ffi::TDB_ERR_CONFLICT,
+            ErrorCode::TooLarge => ffi::TDB_ERR_TOO_LARGE,
+            ErrorCode::MemoryLimit => ffi::TDB_ERR_MEMORY_LIMIT,
+            ErrorCode::InvalidDb => ffi::TDB_ERR_INVALID_DB,
+            ErrorCode::Unknown => ffi::TDB_ERR_UNKNOWN,
+            ErrorCode::Locked => ffi::TDB_ERR_LOCKED,
+            ErrorCode::ReadOnly => ffi::TDB_ERR_READONLY,
+            ErrorCode::TxnExpired => ffi::TDB_ERR_TXN_EXPIRED,
+            ErrorCode::NoSpace => ffi::TDB_ERR_NO_SPACE,
+            ErrorCode::TxnAborted => ffi::TDB_ERR_TXN_ABORTED,
+            ErrorCode::TooOld => ffi::TDB_ERR_TOO_OLD,
         }
     }
 }
 
 impl fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorCode::Memory => write!(f, "memory allocation failed"),
-            ErrorCode::InvalidArgs => write!(f, "invalid arguments"),
-            ErrorCode::NotFound => write!(f, "not found"),
-            ErrorCode::Io => write!(f, "I/O error"),
-            ErrorCode::Corruption => write!(f, "data corruption"),
-            ErrorCode::Exists => write!(f, "already exists"),
-            ErrorCode::Conflict => write!(f, "transaction conflict"),
-            ErrorCode::TooLarge => write!(f, "key or value too large"),
-            ErrorCode::MemoryLimit => write!(f, "memory limit exceeded"),
-            ErrorCode::InvalidDb => write!(f, "invalid database handle"),
-            ErrorCode::Unknown => write!(f, "unknown error"),
-            ErrorCode::Locked => write!(f, "database is locked"),
-            ErrorCode::ReadOnly => write!(f, "database is read-only"),
-            ErrorCode::Busy => write!(f, "resource is busy"),
-            ErrorCode::Precondition => write!(f, "precondition not met"),
-        }
+        // tidesdb_strerror returns a static literal, never NULL
+        let msg = unsafe { CStr::from_ptr(ffi::tidesdb_strerror(self.code())) };
+        f.write_str(&msg.to_string_lossy())
     }
 }
 
@@ -116,31 +137,32 @@ impl Error {
     /// Create a new TidesDB error from a C error code
     pub fn from_code(code: i32, context: &'static str) -> Self {
         Error::TidesDB {
-            code: ErrorCode::from_code(code).unwrap_or(ErrorCode::Unknown),
+            code: ErrorCode::from_code(code),
             context,
+        }
+    }
+
+    /// The TidesDB error code, if this error came from the C library
+    pub fn code(&self) -> Option<ErrorCode> {
+        match self {
+            Error::TidesDB { code, .. } => Some(*code),
+            _ => None,
         }
     }
 
     /// Check if this is a "not found" error
     pub fn is_not_found(&self) -> bool {
-        matches!(
-            self,
-            Error::TidesDB {
-                code: ErrorCode::NotFound,
-                ..
-            }
-        )
+        self.code() == Some(ErrorCode::NotFound)
     }
 
-    /// Check if this is a conflict error
+    /// Check if this is a transaction conflict error
     pub fn is_conflict(&self) -> bool {
-        matches!(
-            self,
-            Error::TidesDB {
-                code: ErrorCode::Conflict,
-                ..
-            }
-        )
+        self.code() == Some(ErrorCode::Conflict)
+    }
+
+    /// Check if this is transient contention ([`ErrorCode::Locked`]) that should be retried
+    pub fn is_locked(&self) -> bool {
+        self.code() == Some(ErrorCode::Locked)
     }
 }
 
