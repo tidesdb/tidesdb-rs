@@ -4,20 +4,73 @@
 // Licensed under the Mozilla Public License, v. 2.0 (the "License");
 
 //! Raw FFI bindings to the TidesDB C library.
+//!
+//! Mirrors `include/db.h` of the bundled TidesDB release (see `TIDESDB_VERSION`).
+//! Every `#[repr(C)]` struct here must match the C layout exactly, since several
+//! are filled in place by the library. The layout tests at the bottom of this file
+//! pin the sizes so a header change cannot slip through silently.
+//!
 //! These are unsafe and should not be used directly.
 
 #![allow(dead_code)]
+#![allow(non_camel_case_types)]
 
-use libc::{c_char, c_double, c_float, c_int, c_void, size_t, time_t};
+use libc::{c_char, c_double, c_float, c_int, c_long, c_void, size_t, time_t};
 
-/// Maximum comparator name length
-pub const TDB_MAX_COMPARATOR_NAME: usize = 64;
-/// Maximum comparator context string length
-pub const TDB_MAX_COMPARATOR_CTX: usize = 256;
-/// Maximum column family name length
-pub const TDB_MAX_CF_NAME_LEN: usize = 128;
+/// The TidesDB release these bindings were written against.
+pub const TIDESDB_VERSION: &str = "10.2.1";
 
-/// Error codes (negative values as per C API)
+// ===== enums =====
+
+/// Log levels (`tidesdb_log_level_t`)
+pub const TDB_LOG_NONE: c_int = 0;
+pub const TDB_LOG_TRACE: c_int = 1;
+pub const TDB_LOG_INFO: c_int = 2;
+pub const TDB_LOG_WARN: c_int = 3;
+pub const TDB_LOG_ERROR: c_int = 4;
+
+/// Isolation levels (`tidesdb_isolation_level_t`)
+pub const TDB_ISOLATION_READ_UNCOMMITTED: c_int = 0;
+pub const TDB_ISOLATION_READ_COMMITTED: c_int = 1;
+pub const TDB_ISOLATION_REPEATABLE_READ: c_int = 2;
+pub const TDB_ISOLATION_SNAPSHOT: c_int = 3;
+pub const TDB_ISOLATION_SERIALIZABLE: c_int = 4;
+
+/// Transaction lifecycle states (`tidesdb_txn_state_t`)
+pub const TDB_TXN_STATE_ACTIVE: c_int = 0;
+pub const TDB_TXN_STATE_PREPARED: c_int = 1;
+pub const TDB_TXN_STATE_COMMITTED: c_int = 2;
+pub const TDB_TXN_STATE_ABORTED: c_int = 3;
+
+/// Compression algorithms (`tidesdb_compression_algorithm_t`), also the encoding ids
+/// accepted in a column family's encoding pipeline.
+pub const TDB_COMPRESS_NONE: c_int = 0;
+pub const TDB_COMPRESS_SNAPPY: c_int = 1;
+pub const TDB_COMPRESS_LZ4: c_int = 2;
+pub const TDB_COMPRESS_ZSTD: c_int = 3;
+pub const TDB_COMPRESS_LZ4_FAST: c_int = 4;
+
+/// Sync modes (`tidesdb_sync_mode_t`)
+pub const TDB_SYNC_NONE: c_int = 0;
+pub const TDB_SYNC_FULL: c_int = 1;
+pub const TDB_SYNC_INTERVAL: c_int = 2;
+
+/// Stall reasons (`tidesdb_stall_reason_t`)
+pub const TDB_STALL_WAL_APPEND: c_int = 0;
+pub const TDB_STALL_ROTATE_LOCK: c_int = 1;
+pub const TDB_STALL_ROTATE_WORK: c_int = 2;
+pub const TDB_STALL_ADMISSION: c_int = 3;
+pub const TDB_STALL_MANIFEST_COMMIT: c_int = 4;
+pub const TDB_STALL_COUNT: usize = 5;
+
+/// I/O classes (`tidesdb_io_class_t`)
+pub const TDB_IO_SSTABLE: c_int = 0;
+pub const TDB_IO_WAL: c_int = 1;
+pub const TDB_IO_VLOG: c_int = 2;
+pub const TDB_IO_COUNT: usize = 3;
+
+// ===== error codes =====
+
 pub const TDB_SUCCESS: c_int = 0;
 pub const TDB_ERR_MEMORY: c_int = -1;
 pub const TDB_ERR_INVALID_ARGS: c_int = -2;
@@ -32,49 +85,23 @@ pub const TDB_ERR_INVALID_DB: c_int = -10;
 pub const TDB_ERR_UNKNOWN: c_int = -11;
 pub const TDB_ERR_LOCKED: c_int = -12;
 pub const TDB_ERR_READONLY: c_int = -13;
-pub const TDB_ERR_BUSY: c_int = -14;
-pub const TDB_ERR_PRECONDITION: c_int = -15;
+pub const TDB_ERR_TXN_EXPIRED: c_int = -14;
+pub const TDB_ERR_NO_SPACE: c_int = -15;
+pub const TDB_ERR_TXN_ABORTED: c_int = -16;
+pub const TDB_ERR_TOO_OLD: c_int = -17;
 
-/// Object store backend identifiers (`tidesdb_objstore_backend_t`)
-pub const TDB_BACKEND_FS: c_int = 0;
-pub const TDB_BACKEND_S3: c_int = 1;
-pub const TDB_BACKEND_UNKNOWN: c_int = 99;
+// ===== configuration limits =====
 
-/// Compression algorithms (values from C API documentation)
-pub const NO_COMPRESSION: c_int = 0;
-pub const SNAPPY_COMPRESSION: c_int = 1;
-pub const LZ4_COMPRESSION: c_int = 2;
-pub const ZSTD_COMPRESSION: c_int = 3;
-pub const LZ4_FAST_COMPRESSION: c_int = 4;
+pub const TDB_MAX_CF_NAME_LEN: usize = 128;
+pub const TDB_ENCODING_PIPELINE_MAX: usize = 8;
+pub const TDB_MAX_RANGE_BOUND_SIZE: usize = 256;
+pub const TDB_MAX_LEVELS: usize = 8;
+pub const TDB_MAX_ENCODING_CHAINS: usize = 16;
 
-/// Sync modes
-pub const TDB_SYNC_NONE: c_int = 0;
-pub const TDB_SYNC_FULL: c_int = 1;
-pub const TDB_SYNC_INTERVAL: c_int = 2;
+// ===== opaque handles =====
 
-/// Log levels
-pub const TDB_LOG_DEBUG: c_int = 0;
-pub const TDB_LOG_INFO: c_int = 1;
-pub const TDB_LOG_WARN: c_int = 2;
-pub const TDB_LOG_ERROR: c_int = 3;
-pub const TDB_LOG_FATAL: c_int = 4;
-pub const TDB_LOG_NONE: c_int = 99;
-
-/// Isolation levels
-pub const TDB_ISOLATION_READ_UNCOMMITTED: c_int = 0;
-pub const TDB_ISOLATION_READ_COMMITTED: c_int = 1;
-pub const TDB_ISOLATION_REPEATABLE_READ: c_int = 2;
-pub const TDB_ISOLATION_SNAPSHOT: c_int = 3;
-pub const TDB_ISOLATION_SERIALIZABLE: c_int = 4;
-
-/// Opaque types
 #[repr(C)]
 pub struct tidesdb_t {
-    _private: [u8; 0],
-}
-
-#[repr(C)]
-pub struct tidesdb_txn_t {
     _private: [u8; 0],
 }
 
@@ -84,106 +111,23 @@ pub struct tidesdb_column_family_t {
 }
 
 #[repr(C)]
+pub struct tidesdb_txn_t {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct tidesdb_snapshot_t {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
 pub struct tidesdb_iter_t {
     _private: [u8; 0],
 }
 
-#[repr(C)]
-pub struct tidesdb_objstore_t {
-    _private: [u8; 0],
-}
+// ===== callback types =====
 
-/// Object store behavior configuration
-#[repr(C)]
-pub struct tidesdb_objstore_config_t {
-    pub local_cache_path: *const c_char,
-    pub local_cache_max_bytes: size_t,
-    pub cache_on_read: c_int,
-    pub cache_on_write: c_int,
-    pub max_concurrent_uploads: c_int,
-    pub max_concurrent_downloads: c_int,
-    pub multipart_threshold: size_t,
-    pub multipart_part_size: size_t,
-    pub sync_manifest_to_object: c_int,
-    pub replicate_wal: c_int,
-    pub wal_upload_sync: c_int,
-    pub wal_sync_threshold_bytes: size_t,
-    pub wal_sync_on_commit: c_int,
-    pub replica_mode: c_int,
-    pub replica_sync_interval_us: u64,
-    pub replica_replay_wal: c_int,
-}
-
-/// Full S3 connector configuration (TLS + multipart tuning).
-///
-/// Zero-initialize and set what you need; the all-zero defaults are secure
-/// (TLS verify on, no custom CA) and use the built-in multipart sizes.
-#[repr(C)]
-pub struct tidesdb_objstore_s3_config_t {
-    pub endpoint: *const c_char,
-    pub bucket: *const c_char,
-    pub prefix: *const c_char,
-    pub access_key: *const c_char,
-    pub secret_key: *const c_char,
-    pub region: *const c_char,
-    pub use_ssl: c_int,
-    pub use_path_style: c_int,
-    pub tls_ca_path: *const c_char,
-    pub tls_insecure_skip_verify: c_int,
-    pub multipart_threshold: size_t,
-    pub multipart_part_size: size_t,
-}
-
-/// Custom allocator function types
-#[allow(non_camel_case_types)]
-pub type tidesdb_malloc_fn = Option<unsafe extern "C" fn(size: size_t) -> *mut c_void>;
-#[allow(non_camel_case_types)]
-pub type tidesdb_calloc_fn =
-    Option<unsafe extern "C" fn(nmemb: size_t, size: size_t) -> *mut c_void>;
-#[allow(non_camel_case_types)]
-pub type tidesdb_realloc_fn =
-    Option<unsafe extern "C" fn(ptr: *mut c_void, size: size_t) -> *mut c_void>;
-#[allow(non_camel_case_types)]
-pub type tidesdb_free_fn = Option<unsafe extern "C" fn(ptr: *mut c_void)>;
-
-/// Comparator function type
-#[allow(non_camel_case_types)]
-pub type tidesdb_comparator_fn = Option<
-    unsafe extern "C" fn(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
-    ) -> c_int,
->;
-
-/// Database configuration
-#[repr(C)]
-pub struct tidesdb_config_t {
-    pub db_path: *const c_char,
-    pub num_flush_threads: c_int,
-    pub num_compaction_threads: c_int,
-    pub log_level: c_int,
-    pub block_cache_size: size_t,
-    pub max_open_sstables: size_t,
-    pub log_to_file: c_int,
-    pub log_truncation_at: size_t,
-    pub max_memory_usage: size_t,
-    pub unified_memtable: c_int,
-    pub unified_memtable_write_buffer_size: size_t,
-    pub unified_memtable_skip_list_max_level: c_int,
-    pub unified_memtable_skip_list_probability: c_float,
-    pub unified_memtable_sync_mode: c_int,
-    pub unified_memtable_sync_interval_us: u64,
-    pub object_store: *mut tidesdb_objstore_t,
-    pub object_store_config: *mut tidesdb_objstore_config_t,
-    // Added in TidesDB 9.2.0. Older 9.0.x/9.1.x tags have a shorter C struct.
-    #[cfg(tidesdb_has_max_concurrent_flushes)]
-    pub max_concurrent_flushes: c_int,
-}
-
-/// Commit operation passed to commit hook callback
+/// One operation in a committed transaction batch, passed to the commit hook
 #[repr(C)]
 pub struct tidesdb_commit_op_t {
     pub key: *const u8,
@@ -195,7 +139,6 @@ pub struct tidesdb_commit_op_t {
 }
 
 /// Commit hook callback function type
-#[allow(non_camel_case_types)]
 pub type tidesdb_commit_hook_fn = Option<
     unsafe extern "C" fn(
         ops: *const tidesdb_commit_op_t,
@@ -205,156 +148,87 @@ pub type tidesdb_commit_hook_fn = Option<
     ) -> c_int,
 >;
 
-/// Column family configuration
+// ===== configuration =====
+
+/// Per-column-family configuration
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct tidesdb_column_family_config_t {
     pub name: [c_char; TDB_MAX_CF_NAME_LEN],
-    pub write_buffer_size: size_t,
     pub level_size_ratio: size_t,
     pub min_levels: c_int,
     pub dividing_level_offset: c_int,
-    pub klog_value_threshold: size_t,
-    pub compression_algo: c_int,
+    pub keep_values_inline: c_int,
+    pub btree_klog_block_size: size_t,
+    pub encoding_pipeline: [u8; TDB_ENCODING_PIPELINE_MAX],
+    pub encoding_count: u8,
     pub enable_bloom_filter: c_int,
     pub bloom_fpr: c_double,
-    pub enable_block_indexes: c_int,
-    pub index_sample_ratio: c_int,
-    pub block_index_prefix_len: c_int,
-    pub sync_mode: c_int,
-    pub sync_interval_us: u64,
-    pub comparator_name: [c_char; TDB_MAX_COMPARATOR_NAME],
-    pub comparator_ctx_str: [c_char; TDB_MAX_COMPARATOR_CTX],
-    pub comparator_fn_cached: *mut c_void,
-    pub comparator_ctx_cached: *mut c_void,
-    pub skip_list_max_level: c_int,
-    pub skip_list_probability: c_float,
     pub default_isolation_level: c_int,
-    pub min_disk_space: u64,
     pub l1_file_count_trigger: c_int,
-    pub l0_queue_stall_threshold: c_int,
-    // Added in TidesDB 9.2.0 with tombstone-density compaction controls.
-    #[cfg(tidesdb_has_tombstone_stats)]
     pub tombstone_density_trigger: c_double,
-    #[cfg(tidesdb_has_tombstone_stats)]
     pub tombstone_density_min_entries: u64,
-    pub use_btree: c_int,
     pub commit_hook_fn: tidesdb_commit_hook_fn,
     pub commit_hook_ctx: *mut c_void,
-    /// Reserved field; preserved for ABI compatibility with the C struct.
-    pub object_target_file_size: size_t,
-    pub object_lazy_compaction: c_int,
-    pub object_prefetch_compaction: c_int,
 }
 
-/// Statistics for a column family
+/// Database-level configuration
 #[repr(C)]
-pub struct tidesdb_stats_t {
+pub struct tidesdb_config_t {
+    pub db_path: *mut c_char,
+    pub num_flush_threads: c_int,
+    pub num_compaction_threads: c_int,
+    pub log_level: c_int,
+    pub block_cache_size: size_t,
+    pub max_open_sstables: size_t,
+    pub log_to_file: c_int,
+    pub log_truncation_at: size_t,
+    pub memtable_write_buffer_size: size_t,
+    pub memtable_skip_list_max_level: c_int,
+    pub memtable_skip_list_probability: c_float,
+    pub memtable_sync_mode: c_int,
+    pub memtable_sync_interval_us: u64,
+    pub value_separation_threshold: size_t,
+    pub vlog_segment_size: size_t,
+    pub memtable_l0_queue_stall_threshold: c_int,
+    pub memtable_idle_flush_seconds: c_int,
+    pub txn_timeout_seconds: i64,
+}
+
+// ===== statistics =====
+
+/// Per-column-family statistics, a flat value with nothing to free
+#[repr(C)]
+pub struct tidesdb_cf_stats_t {
     pub num_levels: c_int,
-    pub memtable_size: size_t,
-    pub level_sizes: *mut size_t,
-    pub level_num_sstables: *mut c_int,
-    pub config: *mut tidesdb_column_family_config_t,
+    pub config: tidesdb_column_family_config_t,
+    pub level_sizes: [size_t; TDB_MAX_LEVELS],
+    pub level_num_sstables: [c_int; TDB_MAX_LEVELS],
+    pub level_key_counts: [u64; TDB_MAX_LEVELS],
+    pub level_tombstone_counts: [u64; TDB_MAX_LEVELS],
     pub total_keys: u64,
     pub total_data_size: u64,
     pub avg_key_size: c_double,
     pub avg_value_size: c_double,
-    pub level_key_counts: *mut u64,
     pub read_amp: c_double,
-    pub hit_rate: c_double,
-    pub use_btree: c_int,
     pub btree_total_nodes: u64,
     pub btree_max_height: u32,
     pub btree_avg_height: c_double,
-    // Added in TidesDB 9.2.0 with tombstone observability.
-    #[cfg(tidesdb_has_tombstone_stats)]
     pub total_tombstones: u64,
-    #[cfg(tidesdb_has_tombstone_stats)]
     pub tombstone_ratio: c_double,
-    #[cfg(tidesdb_has_tombstone_stats)]
-    pub level_tombstone_counts: *mut u64,
-    #[cfg(tidesdb_has_tombstone_stats)]
     pub max_sst_density: c_double,
-    #[cfg(tidesdb_has_tombstone_stats)]
     pub max_sst_density_level: c_int,
-    // Added in TidesDB 9.3.4 with write-amplification observability.
-    #[cfg(tidesdb_has_write_amp_stats)]
     pub wal_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
     pub flush_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
     pub compaction_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
     pub compaction_bytes_read: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
     pub user_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub flush_count: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
     pub compaction_count: u64,
+    pub unflushed_key_count: u64,
+    pub filter_resident_bytes: u64,
 }
 
-/// Database-level aggregate statistics
-#[repr(C)]
-pub struct tidesdb_db_stats_t {
-    pub num_column_families: c_int,
-    pub total_memory: u64,
-    pub available_memory: u64,
-    pub resolved_memory_limit: size_t,
-    pub memory_pressure_level: c_int,
-    pub flush_pending_count: c_int,
-    pub total_memtable_bytes: i64,
-    pub total_immutable_count: c_int,
-    pub total_sstable_count: c_int,
-    pub total_data_size_bytes: u64,
-    pub num_open_sstables: c_int,
-    pub global_seq: u64,
-    pub txn_memory_bytes: i64,
-    pub compaction_queue_size: size_t,
-    pub flush_queue_size: size_t,
-    pub unified_memtable_enabled: c_int,
-    pub unified_memtable_bytes: i64,
-    pub unified_immutable_count: c_int,
-    pub unified_is_flushing: c_int,
-    pub unified_next_cf_index: u32,
-    pub unified_wal_generation: u64,
-    pub object_store_enabled: c_int,
-    pub object_store_connector: *const c_char,
-    pub local_cache_bytes_used: size_t,
-    pub local_cache_bytes_max: size_t,
-    pub local_cache_num_files: c_int,
-    pub last_uploaded_generation: u64,
-    pub upload_queue_depth: size_t,
-    pub total_uploads: u64,
-    pub total_upload_failures: u64,
-    pub replica_mode: c_int,
-    // Added in TidesDB 9.3.8: single-writer fencing epochs (object-store mode).
-    // These sit between `replica_mode` and the write-amp counters in the C
-    // struct, so they must be gated and ordered to match the C layout exactly.
-    #[cfg(tidesdb_has_single_writer_fencing)]
-    pub primary_epoch: u64,
-    #[cfg(tidesdb_has_single_writer_fencing)]
-    pub seen_epoch: u64,
-    // Added in TidesDB 9.3.4. This struct is stack-allocated by Rust before
-    // passing it to C, so the tail must match C exactly to avoid overwrites.
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub uwal_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub wal_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub flush_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub compaction_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub compaction_bytes_read: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub user_bytes_written: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub flush_count: u64,
-    #[cfg(tidesdb_has_write_amp_stats)]
-    pub compaction_count: u64,
-}
-
-/// Cache statistics
+/// Block cache statistics
 #[repr(C)]
 pub struct tidesdb_cache_stats_t {
     pub enabled: c_int,
@@ -366,31 +240,142 @@ pub struct tidesdb_cache_stats_t {
     pub num_partitions: size_t,
 }
 
+/// What one encoding chain achieved on the data it wrote
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct tidesdb_encoding_stats_t {
+    pub ids: [u8; TDB_ENCODING_PIPELINE_MAX],
+    pub id_count: c_int,
+    pub logical_bytes: u64,
+    pub stored_bytes: u64,
+    pub item_count: u64,
+}
+
+/// Database-level statistics
+#[repr(C)]
+pub struct tidesdb_db_stats_t {
+    pub num_column_families: c_int,
+    pub immutable_memtable_count: c_int,
+    pub compaction_pending_count: c_int,
+    pub total_sstable_count: c_int,
+    pub total_data_size_bytes: u64,
+    pub num_open_sstables: c_int,
+    pub global_seq: u64,
+    pub min_snapshot_seq: u64,
+    pub active_txn_count: c_int,
+    pub txn_memory_bytes: i64,
+    pub txn_commits: u64,
+    pub txn_conflicts: u64,
+    pub memtable_bytes: size_t,
+    pub is_flushing: c_int,
+    pub next_cf_index: u32,
+    pub wal_generation: u64,
+    pub flush_count: u64,
+    pub compaction_count: u64,
+    pub flush_bytes_written: u64,
+    pub compaction_bytes_written: u64,
+    pub compaction_bytes_read: u64,
+    pub wal_bytes_written: u64,
+    pub user_bytes_written: u64,
+    pub vlog_file_size: u64,
+    pub vlog_value_count: u64,
+    pub vlog_used_bytes: u64,
+    pub vlog_stored_bytes: u64,
+    pub vlog_live_bytes: u64,
+    pub vlog_segment_count: u64,
+    pub vlog_bytes_written: u64,
+    pub vlog_dead_bytes: u64,
+    pub vlog_reclaim_calls: u64,
+    pub vlog_reclaim_passes: u64,
+    pub vlog_segments_retired: u64,
+    pub vlog_segments_drainable: u64,
+    pub writes_throttled: u64,
+    pub writes_blocked: u64,
+    pub write_stall_us: u64,
+    pub write_stall_ceiling_hits: u64,
+}
+
+/// How much waiting one stall reason accounted for
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct tidesdb_stall_stat_t {
+    pub count: u64,
+    pub total_us: u64,
+    pub max_us: u64,
+}
+
+/// Every stall reason, indexed by `tidesdb_stall_reason_t`
+#[repr(C)]
+pub struct tidesdb_stall_stats_t {
+    pub reasons: [tidesdb_stall_stat_t; TDB_STALL_COUNT],
+}
+
+/// What one class of file asked of the device
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct tidesdb_io_stat_t {
+    pub ops: u64,
+    pub bytes: u64,
+    pub total_us: u64,
+    pub max_us: u64,
+}
+
+/// Every I/O class, indexed by `tidesdb_io_class_t`
+#[repr(C)]
+pub struct tidesdb_io_stats_t {
+    pub classes: [tidesdb_io_stat_t; TDB_IO_COUNT],
+}
+
+/// Query-planner statistics for a key range
+#[repr(C)]
+pub struct tidesdb_range_stats_t {
+    pub sstables_overlapping: u64,
+    pub estimated_keys: u64,
+    pub keys_exact: c_int,
+}
+
+/// A transaction durably prepared before a restart and still awaiting a decision
+#[repr(C)]
+pub struct tidesdb_prepared_txn_t {
+    pub txn: *mut tidesdb_txn_t,
+    pub xid: *const u8,
+    pub xid_size: size_t,
+}
+
 #[link(name = "tidesdb")]
 unsafe extern "C" {
-    // Initialization / custom allocator
-    pub fn tidesdb_init(
-        malloc_fn: tidesdb_malloc_fn,
-        calloc_fn: tidesdb_calloc_fn,
-        realloc_fn: tidesdb_realloc_fn,
-        free_fn: tidesdb_free_fn,
-    ) -> c_int;
-    pub fn tidesdb_finalize();
+    // Utilities
+    pub fn tidesdb_compression_available(algo: c_int) -> c_int;
+    pub fn tidesdb_strerror(code: c_int) -> *const c_char;
+    pub fn tidesdb_free(ptr: *mut c_void);
 
-    // Database operations
+    // Defaults
+    pub fn tidesdb_default_column_family_config() -> tidesdb_column_family_config_t;
+    pub fn tidesdb_default_config() -> tidesdb_config_t;
+
+    // Process limits
+    pub fn tidesdb_raise_open_file_limit(desired: c_long) -> c_long;
+
+    // Database lifecycle
     pub fn tidesdb_open(config: *const tidesdb_config_t, db: *mut *mut tidesdb_t) -> c_int;
     pub fn tidesdb_close(db: *mut tidesdb_t) -> c_int;
 
-    // Column family operations
+    // Column families
     pub fn tidesdb_create_column_family(
         db: *mut tidesdb_t,
         name: *const c_char,
         config: *const tidesdb_column_family_config_t,
     ) -> c_int;
     pub fn tidesdb_drop_column_family(db: *mut tidesdb_t, name: *const c_char) -> c_int;
-    pub fn tidesdb_delete_column_family(
+    pub fn tidesdb_rename_column_family(
         db: *mut tidesdb_t,
-        cf: *mut tidesdb_column_family_t,
+        old_name: *const c_char,
+        new_name: *const c_char,
+    ) -> c_int;
+    pub fn tidesdb_clone_column_family(
+        db: *mut tidesdb_t,
+        src_name: *const c_char,
+        dst_name: *const c_char,
     ) -> c_int;
     pub fn tidesdb_get_column_family(
         db: *mut tidesdb_t,
@@ -401,84 +386,135 @@ unsafe extern "C" {
         names: *mut *mut *mut c_char,
         count: *mut c_int,
     ) -> c_int;
-
-    // Default configuration
-    pub fn tidesdb_default_column_family_config() -> tidesdb_column_family_config_t;
-
-    // Statistics
-    pub fn tidesdb_get_stats(
-        cf: *mut tidesdb_column_family_t,
-        stats: *mut *mut tidesdb_stats_t,
-    ) -> c_int;
-    pub fn tidesdb_free_stats(stats: *mut tidesdb_stats_t);
-    pub fn tidesdb_get_cache_stats(db: *mut tidesdb_t, stats: *mut tidesdb_cache_stats_t) -> c_int;
-
-    // Maintenance
-    pub fn tidesdb_compact(cf: *mut tidesdb_column_family_t) -> c_int;
-    #[cfg(tidesdb_has_cancel_background_work)]
-    pub fn tidesdb_cancel_background_work(db: *mut tidesdb_t) -> c_int;
-    #[cfg(tidesdb_has_compact_range)]
-    pub fn tidesdb_compact_range(
-        cf: *mut tidesdb_column_family_t,
-        start_key: *const u8,
-        start_key_size: size_t,
-        end_key: *const u8,
-        end_key_size: size_t,
-    ) -> c_int;
-    pub fn tidesdb_flush_memtable(cf: *mut tidesdb_column_family_t) -> c_int;
-    #[cfg(tidesdb_has_raise_open_file_limit)]
-    pub fn tidesdb_raise_open_file_limit(desired: libc::c_long) -> libc::c_long;
-
-    // Comparator
-    pub fn tidesdb_register_comparator(
+    pub fn tidesdb_cf_update_runtime_config(
         db: *mut tidesdb_t,
-        name: *const c_char,
-        compare_fn: tidesdb_comparator_fn,
-        ctx_str: *const c_char,
+        cf: *mut tidesdb_column_family_t,
+        new_config: *const tidesdb_column_family_config_t,
+        persist_to_disk: c_int,
+    ) -> c_int;
+    pub fn tidesdb_cf_set_commit_hook(
+        db: *mut tidesdb_t,
+        cf: *mut tidesdb_column_family_t,
+        hook_fn: tidesdb_commit_hook_fn,
         ctx: *mut c_void,
     ) -> c_int;
 
-    // Transaction operations
+    // Transactions
     pub fn tidesdb_txn_begin(db: *mut tidesdb_t, txn: *mut *mut tidesdb_txn_t) -> c_int;
     pub fn tidesdb_txn_begin_with_isolation(
         db: *mut tidesdb_t,
         isolation: c_int,
         txn: *mut *mut tidesdb_txn_t,
     ) -> c_int;
+    pub fn tidesdb_txn_begin_cf(
+        db: *mut tidesdb_t,
+        cf: *mut tidesdb_column_family_t,
+        txn: *mut *mut tidesdb_txn_t,
+    ) -> c_int;
+
+    // Snapshots and point-in-time reads
+    pub fn tidesdb_snapshot_create(
+        db: *mut tidesdb_t,
+        snapshot: *mut *mut tidesdb_snapshot_t,
+    ) -> c_int;
+    pub fn tidesdb_snapshot_release(snapshot: *mut tidesdb_snapshot_t);
+    pub fn tidesdb_snapshot_seq(snapshot: *const tidesdb_snapshot_t) -> u64;
+    pub fn tidesdb_txn_begin_at_snapshot(
+        db: *mut tidesdb_t,
+        snapshot: *mut tidesdb_snapshot_t,
+        txn: *mut *mut tidesdb_txn_t,
+    ) -> c_int;
+    pub fn tidesdb_txn_begin_at_seq(
+        db: *mut tidesdb_t,
+        seq: u64,
+        txn: *mut *mut tidesdb_txn_t,
+    ) -> c_int;
+    pub fn tidesdb_oldest_readable_seq(db: *const tidesdb_t) -> u64;
+
+    // Transaction operations
     pub fn tidesdb_txn_put(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,
         key: *const u8,
-        key_len: size_t,
+        key_size: size_t,
         value: *const u8,
-        value_len: size_t,
+        value_size: size_t,
         ttl: time_t,
     ) -> c_int;
     pub fn tidesdb_txn_get(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,
         key: *const u8,
-        key_len: size_t,
+        key_size: size_t,
         value: *mut *mut u8,
-        value_len: *mut size_t,
+        value_size: *mut size_t,
+    ) -> c_int;
+    pub fn tidesdb_txn_get_ttl(
+        txn: *mut tidesdb_txn_t,
+        cf: *mut tidesdb_column_family_t,
+        key: *const u8,
+        key_size: size_t,
+        ttl: *mut time_t,
+    ) -> c_int;
+    pub fn tidesdb_txn_get_notrack(
+        txn: *mut tidesdb_txn_t,
+        cf: *mut tidesdb_column_family_t,
+        key: *const u8,
+        key_size: size_t,
+        value: *mut *mut u8,
+        value_size: *mut size_t,
+    ) -> c_int;
+    pub fn tidesdb_txn_read_snapshot(txn: *const tidesdb_txn_t) -> u64;
+    pub fn tidesdb_txn_contains(
+        txn: *mut tidesdb_txn_t,
+        cf: *mut tidesdb_column_family_t,
+        key: *const u8,
+        key_size: size_t,
+    ) -> c_int;
+    pub fn tidesdb_txn_delete_range(
+        txn: *mut tidesdb_txn_t,
+        cf: *mut tidesdb_column_family_t,
+        lo: *const u8,
+        lo_size: size_t,
+        hi: *const u8,
+        hi_size: size_t,
+    ) -> c_int;
+    pub fn tidesdb_txn_delete_prefix(
+        txn: *mut tidesdb_txn_t,
+        cf: *mut tidesdb_column_family_t,
+        prefix: *const u8,
+        prefix_size: size_t,
     ) -> c_int;
     pub fn tidesdb_txn_delete(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,
         key: *const u8,
-        key_len: size_t,
+        key_size: size_t,
     ) -> c_int;
-    #[cfg(tidesdb_has_txn_single_delete)]
     pub fn tidesdb_txn_single_delete(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,
         key: *const u8,
-        key_len: size_t,
+        key_size: size_t,
     ) -> c_int;
     pub fn tidesdb_txn_commit(txn: *mut tidesdb_txn_t) -> c_int;
     pub fn tidesdb_txn_rollback(txn: *mut tidesdb_txn_t) -> c_int;
-    pub fn tidesdb_txn_free(txn: *mut tidesdb_txn_t);
+    pub fn tidesdb_txn_set_timeout(txn: *mut tidesdb_txn_t, seconds: i64) -> c_int;
+    pub fn tidesdb_txn_request_abort(txn: *mut tidesdb_txn_t);
     pub fn tidesdb_txn_reset(txn: *mut tidesdb_txn_t, isolation: c_int) -> c_int;
+    pub fn tidesdb_txn_free(txn: *mut tidesdb_txn_t);
+
+    // Two-phase commit
+    pub fn tidesdb_txn_prepare(txn: *mut tidesdb_txn_t, xid: *const u8, xid_size: size_t) -> c_int;
+    pub fn tidesdb_txn_commit_prepared(txn: *mut tidesdb_txn_t) -> c_int;
+    pub fn tidesdb_txn_rollback_prepared(txn: *mut tidesdb_txn_t) -> c_int;
+    pub fn tidesdb_recover_prepared(
+        db: *mut tidesdb_t,
+        out: *mut tidesdb_prepared_txn_t,
+        max: c_int,
+        out_count: *mut c_int,
+    ) -> c_int;
+    pub fn tidesdb_txn_state(txn: *const tidesdb_txn_t, out_state: *mut c_int) -> c_int;
 
     // Savepoints
     pub fn tidesdb_txn_savepoint(txn: *mut tidesdb_txn_t, name: *const c_char) -> c_int;
@@ -486,117 +522,43 @@ unsafe extern "C" {
     -> c_int;
     pub fn tidesdb_txn_release_savepoint(txn: *mut tidesdb_txn_t, name: *const c_char) -> c_int;
 
-    // Iterator operations
+    // Iterators
     pub fn tidesdb_iter_new(
         txn: *mut tidesdb_txn_t,
         cf: *mut tidesdb_column_family_t,
         iter: *mut *mut tidesdb_iter_t,
     ) -> c_int;
-    pub fn tidesdb_iter_seek_to_first(iter: *mut tidesdb_iter_t) -> c_int;
-    pub fn tidesdb_iter_seek_to_last(iter: *mut tidesdb_iter_t) -> c_int;
-    pub fn tidesdb_iter_seek(iter: *mut tidesdb_iter_t, key: *const u8, key_len: size_t) -> c_int;
+    pub fn tidesdb_iter_new_range(
+        txn: *mut tidesdb_txn_t,
+        cf: *mut tidesdb_column_family_t,
+        lower: *const u8,
+        lower_size: size_t,
+        upper: *const u8,
+        upper_size: size_t,
+        iter: *mut *mut tidesdb_iter_t,
+    ) -> c_int;
+    pub fn tidesdb_iter_seek(iter: *mut tidesdb_iter_t, key: *const u8, key_size: size_t) -> c_int;
     pub fn tidesdb_iter_seek_for_prev(
         iter: *mut tidesdb_iter_t,
         key: *const u8,
-        key_len: size_t,
+        key_size: size_t,
     ) -> c_int;
-    pub fn tidesdb_iter_valid(iter: *mut tidesdb_iter_t) -> c_int;
+    pub fn tidesdb_iter_seek_to_first(iter: *mut tidesdb_iter_t) -> c_int;
+    pub fn tidesdb_iter_seek_to_last(iter: *mut tidesdb_iter_t) -> c_int;
     pub fn tidesdb_iter_next(iter: *mut tidesdb_iter_t) -> c_int;
     pub fn tidesdb_iter_prev(iter: *mut tidesdb_iter_t) -> c_int;
+    pub fn tidesdb_iter_valid(iter: *mut tidesdb_iter_t) -> c_int;
     pub fn tidesdb_iter_key(
         iter: *mut tidesdb_iter_t,
         key: *mut *mut u8,
-        key_len: *mut size_t,
+        key_size: *mut size_t,
     ) -> c_int;
     pub fn tidesdb_iter_value(
         iter: *mut tidesdb_iter_t,
         value: *mut *mut u8,
-        value_len: *mut size_t,
+        value_size: *mut size_t,
     ) -> c_int;
-    pub fn tidesdb_iter_free(iter: *mut tidesdb_iter_t);
-
-    // Column family rename
-    pub fn tidesdb_rename_column_family(
-        db: *mut tidesdb_t,
-        old_name: *const c_char,
-        new_name: *const c_char,
-    ) -> c_int;
-
-    // Column family clone
-    pub fn tidesdb_clone_column_family(
-        db: *mut tidesdb_t,
-        source_name: *const c_char,
-        dest_name: *const c_char,
-    ) -> c_int;
-
-    // Default config
-    pub fn tidesdb_default_config() -> tidesdb_config_t;
-
-    // Backup
-    pub fn tidesdb_backup(db: *mut tidesdb_t, dir: *mut c_char) -> c_int;
-
-    // Checkpoint
-    pub fn tidesdb_checkpoint(db: *mut tidesdb_t, checkpoint_dir: *const c_char) -> c_int;
-
-    // Flushing/compacting status
-    pub fn tidesdb_is_flushing(cf: *mut tidesdb_column_family_t) -> c_int;
-    pub fn tidesdb_is_compacting(cf: *mut tidesdb_column_family_t) -> c_int;
-
-    // Config INI operations
-    pub fn tidesdb_cf_config_load_from_ini(
-        ini_file: *const c_char,
-        section_name: *const c_char,
-        config: *mut tidesdb_column_family_config_t,
-    ) -> c_int;
-    pub fn tidesdb_cf_config_save_to_ini(
-        ini_file: *const c_char,
-        section_name: *const c_char,
-        config: *const tidesdb_column_family_config_t,
-    ) -> c_int;
-
-    // Runtime config update
-    pub fn tidesdb_cf_update_runtime_config(
-        cf: *mut tidesdb_column_family_t,
-        new_config: *const tidesdb_column_family_config_t,
-        persist_to_disk: c_int,
-    ) -> c_int;
-
-    // Get comparator
-    pub fn tidesdb_get_comparator(
-        db: *mut tidesdb_t,
-        name: *const c_char,
-        fn_out: *mut tidesdb_comparator_fn,
-        ctx_out: *mut *mut c_void,
-    ) -> c_int;
-
-    // Commit hook
-    pub fn tidesdb_cf_set_commit_hook(
-        cf: *mut tidesdb_column_family_t,
-        hook_fn: tidesdb_commit_hook_fn,
-        ctx: *mut c_void,
-    ) -> c_int;
-
-    // Range cost estimation
-    pub fn tidesdb_range_cost(
-        cf: *mut tidesdb_column_family_t,
-        key_a: *const u8,
-        key_a_size: size_t,
-        key_b: *const u8,
-        key_b_size: size_t,
-        cost: *mut c_double,
-    ) -> c_int;
-
-    // Purge operations
-    pub fn tidesdb_purge_cf(cf: *mut tidesdb_column_family_t) -> c_int;
-    pub fn tidesdb_purge(db: *mut tidesdb_t) -> c_int;
-
-    // WAL sync
-    pub fn tidesdb_sync_wal(cf: *mut tidesdb_column_family_t) -> c_int;
-
-    // Database-level statistics
-    pub fn tidesdb_get_db_stats(db: *mut tidesdb_t, stats: *mut tidesdb_db_stats_t) -> c_int;
-
-    // Iterator key+value combined
+    pub fn tidesdb_iter_ttl(iter: *mut tidesdb_iter_t, ttl: *mut time_t) -> c_int;
     pub fn tidesdb_iter_key_value(
         iter: *mut tidesdb_iter_t,
         key: *mut *mut u8,
@@ -604,84 +566,95 @@ unsafe extern "C" {
         value: *mut *mut u8,
         value_size: *mut size_t,
     ) -> c_int;
+    pub fn tidesdb_iter_free(iter: *mut tidesdb_iter_t);
 
-    // Promote replica to primary
-    pub fn tidesdb_promote_to_primary(db: *mut tidesdb_t) -> c_int;
+    // Maintenance
+    pub fn tidesdb_compact(db: *mut tidesdb_t, cf: *mut tidesdb_column_family_t) -> c_int;
+    pub fn tidesdb_compact_range(
+        db: *mut tidesdb_t,
+        cf: *mut tidesdb_column_family_t,
+        start_key: *const u8,
+        start_key_size: size_t,
+        end_key: *const u8,
+        end_key_size: size_t,
+    ) -> c_int;
+    pub fn tidesdb_flush_memtable(db: *mut tidesdb_t) -> c_int;
+    pub fn tidesdb_is_flushing(db: *mut tidesdb_t) -> c_int;
+    pub fn tidesdb_is_compacting(cf: *mut tidesdb_column_family_t) -> c_int;
+    pub fn tidesdb_sync_wal(db: *mut tidesdb_t) -> c_int;
+    pub fn tidesdb_backup(db: *mut tidesdb_t, dir: *const c_char) -> c_int;
+    pub fn tidesdb_checkpoint(db: *mut tidesdb_t) -> c_int;
 
-    // Object store connector factories
-    pub fn tidesdb_objstore_fs_create(root_dir: *const c_char) -> *mut tidesdb_objstore_t;
-
-    // Object store default config
-    pub fn tidesdb_objstore_default_config() -> tidesdb_objstore_config_t;
-
-    // Built-in comparator functions (raw symbols, usable as comparator_fn_cached)
-    pub fn tidesdb_comparator_memcmp(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
+    // Statistics
+    pub fn tidesdb_get_cf_stats(
+        cf: *mut tidesdb_column_family_t,
+        stats: *mut tidesdb_cf_stats_t,
     ) -> c_int;
-    pub fn tidesdb_comparator_lexicographic(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
+    pub fn tidesdb_cf_estimate_cardinality(
+        cf: *mut tidesdb_column_family_t,
+        out_estimate: *mut u64,
     ) -> c_int;
-    pub fn tidesdb_comparator_uint64(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
+    pub fn tidesdb_get_db_stats(db: *mut tidesdb_t, stats: *mut tidesdb_db_stats_t) -> c_int;
+    pub fn tidesdb_get_klog_encoding_stats(
+        db: *mut tidesdb_t,
+        out: *mut tidesdb_encoding_stats_t,
+        max: size_t,
+        out_count: *mut size_t,
     ) -> c_int;
-    pub fn tidesdb_comparator_int64(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
+    pub fn tidesdb_get_vlog_encoding_stats(
+        db: *mut tidesdb_t,
+        out: *mut tidesdb_encoding_stats_t,
+        max: size_t,
+        out_count: *mut size_t,
     ) -> c_int;
-    pub fn tidesdb_comparator_reverse_memcmp(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
+    pub fn tidesdb_get_cache_stats(db: *mut tidesdb_t, stats: *mut tidesdb_cache_stats_t) -> c_int;
+    pub fn tidesdb_stall_reason_name(reason: c_int) -> *const c_char;
+    pub fn tidesdb_get_stall_stats(db: *mut tidesdb_t, stats: *mut tidesdb_stall_stats_t) -> c_int;
+    pub fn tidesdb_io_class_name(cls: c_int) -> *const c_char;
+    pub fn tidesdb_get_io_stats(db: *mut tidesdb_t, stats: *mut tidesdb_io_stats_t) -> c_int;
+    pub fn tidesdb_range_stats(
+        db: *mut tidesdb_t,
+        cf: *mut tidesdb_column_family_t,
+        key_a: *const u8,
+        key_a_size: size_t,
+        key_b: *const u8,
+        key_b_size: size_t,
+        out: *mut tidesdb_range_stats_t,
     ) -> c_int;
-    pub fn tidesdb_comparator_case_insensitive(
-        key1: *const u8,
-        key1_size: size_t,
-        key2: *const u8,
-        key2_size: size_t,
-        ctx: *mut c_void,
-    ) -> c_int;
-
-    // Generic free
-    pub fn tidesdb_free(ptr: *mut c_void);
 }
 
-// S3-compatible object store connector factories.
-//
-// These symbols are only present when the C library was built with
-// `TIDESDB_WITH_S3=ON`, so they are gated behind the `objectstore` feature
-// to avoid unresolved symbols at link time.
-#[cfg(feature = "objectstore")]
-#[link(name = "tidesdb")]
-unsafe extern "C" {
-    pub fn tidesdb_objstore_s3_create(
-        endpoint: *const c_char,
-        bucket: *const c_char,
-        prefix: *const c_char,
-        access_key: *const c_char,
-        secret_key: *const c_char,
-        region: *const c_char,
-        use_ssl: c_int,
-        use_path_style: c_int,
-    ) -> *mut tidesdb_objstore_t;
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use std::mem::{offset_of, size_of};
 
-    pub fn tidesdb_objstore_s3_create_config(
-        config: *const tidesdb_objstore_s3_config_t,
-    ) -> *mut tidesdb_objstore_t;
+    // Sizes and tail offsets for LP64 targets (Linux/macOS x86_64 and aarch64), taken from a C
+    // program compiled against db.h. A mismatch means the C header changed and the struct above
+    // must be brought back in step.
+    #[cfg(all(target_pointer_width = "64", not(windows)))]
+    #[test]
+    fn struct_layouts_match_c() {
+        assert_eq!(size_of::<tidesdb_column_family_config_t>(), 224);
+        assert_eq!(
+            offset_of!(tidesdb_column_family_config_t, commit_hook_ctx),
+            216
+        );
+        assert_eq!(size_of::<tidesdb_config_t>(), 120);
+        assert_eq!(offset_of!(tidesdb_config_t, txn_timeout_seconds), 112);
+        assert_eq!(size_of::<tidesdb_commit_op_t>(), 48);
+        assert_eq!(size_of::<tidesdb_cache_stats_t>(), 56);
+        assert_eq!(size_of::<tidesdb_encoding_stats_t>(), 40);
+        assert_eq!(size_of::<tidesdb_stall_stats_t>(), 120);
+        assert_eq!(size_of::<tidesdb_io_stats_t>(), 96);
+        assert_eq!(size_of::<tidesdb_range_stats_t>(), 24);
+        assert_eq!(size_of::<tidesdb_prepared_txn_t>(), 24);
+        assert_eq!(size_of::<tidesdb_cf_stats_t>(), 616);
+        assert_eq!(offset_of!(tidesdb_cf_stats_t, level_sizes), 232);
+        assert_eq!(offset_of!(tidesdb_cf_stats_t, filter_resident_bytes), 608);
+        assert_eq!(size_of::<tidesdb_db_stats_t>(), 288);
+        assert_eq!(
+            offset_of!(tidesdb_db_stats_t, write_stall_ceiling_hits),
+            280
+        );
+    }
 }

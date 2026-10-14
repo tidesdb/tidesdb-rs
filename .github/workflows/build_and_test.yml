@@ -7,8 +7,51 @@ on:
     branches: [ "master" ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The TidesDB C source is not downloaded separately: it is the tidesdb/ git submodule, pinned
+# to the release the bindings target (build.rs refuses any other), and `submodules: true`
+# checks out exactly that commit.
+
 jobs:
-  build-and-test:
+  # Every job builds on current stable Rust, except `msrv`, which checks that the minimum
+  # declared in Cargo.toml (rust-version, which edition 2024 sets at 1.85) still builds.
+
+  # Formatting, lints and rustdoc.
+  lint:
+    runs-on: ubuntu-latest
+    name: fmt / clippy / doc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The minimum supported Rust version declared in Cargo.toml.
+  msrv:
+    runs-on: ubuntu-latest
+    name: MSRV (1.85)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo test --release
+
+  # Default build: the bundled TidesDB source built by build.rs, no compression and no
+  # system libraries.
+  bundled:
     strategy:
       fail-fast: false
       matrix:
@@ -18,55 +61,21 @@ jobs:
           - os: ubuntu-24.04-arm
             name: Linux ARM64
           - os: macos-latest
-            name: macOS x64
+            name: macOS
           - os: windows-latest
             name: Windows x64
 
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.name }}
+    name: bundled / ${{ matrix.name }}
 
     steps:
-      - name: Checkout tidesdb-rs repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          path: tidesdb-rs
+          submodules: true
 
-      - name: Prepare local source crate patches
-        shell: bash
-        working-directory: tidesdb-rs
-        run: |
-          PYTHON=python3
-          if ! command -v python3 >/dev/null 2>&1; then
-            PYTHON=python
-          fi
-          "$PYTHON" -m venv .cargo/sync-venv
-          VENV_PYTHON=.cargo/sync-venv/bin/python
-          if [ ! -x "$VENV_PYTHON" ]; then
-            VENV_PYTHON=.cargo/sync-venv/Scripts/python.exe
-          fi
-          "$VENV_PYTHON" -m pip install tomlkit requests InquirerPy
-          "$VENV_PYTHON" scripts/sync-versions.py \
-            --prepare-local-patches .cargo/tidesdb-src \
-            --write-cargo-patch-config .cargo/config.toml \
-            --versions current \
-            --yes
-
-      - name: Checkout tidesdb repo
-        uses: actions/checkout@v4
-        with:
-          repository: tidesdb/tidesdb
-          ref: v9.3.15
-          path: tidesdb
-
-      - name: Install dependencies (Linux)
+      - name: Install build tools (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt update
-          sudo apt install -y libzstd-dev liblz4-dev libsnappy-dev build-essential cmake pkg-config
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install zstd lz4 snappy
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
 
       - name: Setup MSYS2 (Windows)
         if: runner.os == 'Windows'
@@ -78,127 +87,192 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-make
-            mingw-w64-x86_64-zstd
-            mingw-w64-x86_64-lz4
-            mingw-w64-x86_64-snappy
             mingw-w64-x86_64-rust
-
-      - name: Configure and build TidesDB (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cd tidesdb
-          cmake -S . -B build -DTIDESDB_BUILD_TESTS=OFF -DTIDESDB_WITH_SANITIZER=OFF
-          cmake --build build --config Release
-          sudo cmake --install build
-          sudo ldconfig
-
-      - name: Configure and build TidesDB (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cd tidesdb
-          export HOMEBREW_PREFIX=$(brew --prefix)
-          cmake -S . -B build \
-            -DTIDESDB_BUILD_TESTS=OFF \
-            -DTIDESDB_WITH_SANITIZER=OFF \
-            -DCMAKE_PREFIX_PATH="${HOMEBREW_PREFIX}"
-          cmake --build build --config Release
-          sudo cmake --install build
-
-      - name: Create CMake config files for MSYS2 packages (Windows)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          MINGW_PREFIX_WIN=$(cygpath -m /mingw64)
-
-          mkdir -p /mingw64/lib/cmake/lz4
-          mkdir -p /mingw64/lib/cmake/zstd
-          mkdir -p /mingw64/lib/cmake/Snappy
-          mkdir -p /mingw64/lib/cmake/PThreads4W
-
-          cat > /mingw64/lib/cmake/lz4/lz4-config.cmake << EOF
-          if(NOT TARGET lz4::lz4)
-            add_library(lz4::lz4 SHARED IMPORTED)
-            set_target_properties(lz4::lz4 PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/liblz4.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/liblz4.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-          cat > /mingw64/lib/cmake/zstd/zstd-config.cmake << EOF
-          if(NOT TARGET zstd::libzstd_shared)
-            add_library(zstd::libzstd_shared SHARED IMPORTED)
-            set_target_properties(zstd::libzstd_shared PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libzstd.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libzstd.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-          cat > /mingw64/lib/cmake/Snappy/Snappy-config.cmake << EOF
-          if(NOT TARGET Snappy::snappy)
-            add_library(Snappy::snappy SHARED IMPORTED)
-            set_target_properties(Snappy::snappy PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libsnappy.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libsnappy.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-          cat > /mingw64/lib/cmake/PThreads4W/PThreads4W-config.cmake << EOF
-          if(NOT TARGET PThreads4W::PThreads4W)
-            add_library(PThreads4W::PThreads4W SHARED IMPORTED)
-            set_target_properties(PThreads4W::PThreads4W PROPERTIES
-              IMPORTED_LOCATION "${MINGW_PREFIX_WIN}/bin/libwinpthread-1.dll"
-              IMPORTED_IMPLIB "${MINGW_PREFIX_WIN}/lib/libpthread.dll.a"
-              INTERFACE_INCLUDE_DIRECTORIES "${MINGW_PREFIX_WIN}/include"
-            )
-          endif()
-          EOF
-
-      - name: Configure and build TidesDB (Windows)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          cd tidesdb
-          cmake -G "MinGW Makefiles" \
-            -DCMAKE_MAKE_PROGRAM=mingw32-make \
-            -DCMAKE_PREFIX_PATH=/mingw64 \
-            -DTIDESDB_WITH_SANITIZER=OFF \
-            -DTIDESDB_BUILD_TESTS=OFF \
-            -S . -B build
-          cmake --build build --config Release
-          cmake --install build --prefix /mingw64
 
       - name: Install Rust toolchain
         if: runner.os != 'Windows'
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.85.0
 
-      - name: Build and test (Linux)
-        if: runner.os == 'Linux'
+      - name: Build and test
+        if: runner.os != 'Windows'
         run: |
-          cd tidesdb-rs
           cargo build --release
-          cargo test --release -- --test-threads=1
+          cargo test --release
 
-      - name: Build and test (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cd tidesdb-rs
-          export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
-          cargo build --release
-          cargo test --release -- --test-threads=1
-
+      # MinGW toolchain from MSYS2. TidesDB's own CI builds MinGW with "MinGW Makefiles";
+      # without this the cmake crate picks "MSYS Makefiles", which needs a `make` that the
+      # mingw-w64 make package (mingw32-make) does not provide.
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
+        env:
+          CMAKE_GENERATOR: MinGW Makefiles
         run: |
           export PATH="/mingw64/bin:$PATH"
-          cd tidesdb-rs
           cargo build --release
-          cargo test --release -- --test-threads=1
+          cargo test --release
+
+  # Opt-in codecs and allocators, each linking its system library.
+  features:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            features: compression
+            packages: libzstd-dev liblz4-dev libsnappy-dev
+          - os: ubuntu-latest
+            features: lz4
+            packages: liblz4-dev
+          - os: ubuntu-latest
+            features: zstd
+            packages: libzstd-dev
+          - os: ubuntu-latest
+            features: snappy
+            packages: libsnappy-dev
+          - os: macos-latest
+            features: compression
+            packages: zstd lz4 snappy
+          - os: ubuntu-latest
+            features: jemalloc
+            packages: libjemalloc-dev
+          - os: ubuntu-latest
+            features: mimalloc
+            packages: libmimalloc-dev
+          - os: ubuntu-latest
+            features: tcmalloc
+            packages: libgoogle-perftools-dev
+
+    runs-on: ${{ matrix.os }}
+    name: features=${{ matrix.features }} / ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake pkg-config ${{ matrix.packages }}
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ${{ matrix.packages }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test
+        run: cargo test --release --features ${{ matrix.features }}
+
+  # A system TidesDB 10.x is linked through pkg-config instead of the bundled source, and one
+  # of another major is ignored with a warning. TidesDB's CMake install ships no .pc file
+  # (distro packages may), so the job writes one the way a package would.
+  system-install:
+    runs-on: ubuntu-latest
+    name: pkg-config system install
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake pkg-config
+
+      - name: Build and install TidesDB from the submodule
+        run: |
+          cmake -S tidesdb -B tidesdb-build -DTIDESDB_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+            -DTIDESDB_WITH_LZ4=OFF -DTIDESDB_WITH_ZSTD=OFF -DTIDESDB_WITH_SNAPPY=OFF
+          cmake --build tidesdb-build
+          sudo cmake --install tidesdb-build
+          sudo ldconfig
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          printf '%s\n' \
+            'prefix=/usr/local' \
+            'libdir=${prefix}/lib' \
+            'includedir=${prefix}/include' \
+            'Name: tidesdb' \
+            'Description: TidesDB storage engine' \
+            'Version: 10.2.1' \
+            'Libs: -L${libdir} -ltidesdb -lpthread' \
+            'Cflags: -I${includedir}' | sudo tee /usr/local/lib/pkgconfig/tidesdb.pc
+          pkg-config --modversion tidesdb
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # build.rs prints `cargo:rustc-cfg=tidesdb_system` when it links the system library and
+      # `cargo:rustc-link-lib=static=tidesdb` when it builds the bundled source instead
+      - name: Build and test against the system library
+        run: |
+          cargo build --release -vv 2>&1 | tee build.log
+          grep -q "cargo:rustc-cfg=tidesdb_system" build.log
+          if grep -q "cargo:rustc-link-lib=static=tidesdb" build.log; then
+            echo "expected the system TidesDB to be linked, but the bundled source was built"
+            exit 1
+          fi
+          cargo test --release
+
+      - name: A system TidesDB of another major is ignored
+        run: |
+          sudo sed -i 's/^Version: .*/Version: 11.0.0/' /usr/local/lib/pkgconfig/tidesdb.pc
+          cargo build --release -vv 2>&1 | tee build.log
+          grep -q "Ignoring the system TidesDB 11.0.0" build.log
+          grep -q "cargo:rustc-link-lib=static=tidesdb" build.log
+          cargo test --release test_linked_version
+
+  # Cross-compiled targets. armv7 is a 32-bit embedded Linux target (it needs libatomic) and
+  # its tests run under QEMU; Windows GNU from Linux checks that nothing in build.rs depends on
+  # the build machine.
+  cross:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: armv7-unknown-linux-gnueabihf
+            packages: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user
+            cc: arm-linux-gnueabihf-gcc
+            runner: qemu-arm -L /usr/arm-linux-gnueabihf
+            command: test
+          - target: aarch64-unknown-linux-gnu
+            packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+            cc: aarch64-linux-gnu-gcc
+            runner: qemu-aarch64 -L /usr/aarch64-linux-gnu
+            command: test
+          - target: x86_64-pc-windows-gnu
+            packages: gcc-mingw-w64-x86-64
+            cc: x86_64-w64-mingw32-gcc
+            runner: ""
+            command: test --no-run
+
+    runs-on: ubuntu-latest
+    name: cross / ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y build-essential cmake ${{ matrix.packages }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build and test
+        shell: bash
+        run: |
+          triple=$(echo "${{ matrix.target }}" | tr '[:lower:]-' '[:upper:]_')
+          export "CC_$(echo "${{ matrix.target }}" | tr '-' '_')=${{ matrix.cc }}"
+          export "CARGO_TARGET_${triple}_LINKER=${{ matrix.cc }}"
+          if [ -n "${{ matrix.runner }}" ]; then export "CARGO_TARGET_${triple}_RUNNER=${{ matrix.runner }}"; fi
+          cargo ${{ matrix.command }} --release --target ${{ matrix.target }}
+
+  package:
+    runs-on: ubuntu-latest
+    name: cargo package
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+      - uses: dtolnay/rust-toolchain@stable
+      # builds the packaged crate from its own tarball, proving the bundled source is complete
+      - run: cargo package --allow-dirty

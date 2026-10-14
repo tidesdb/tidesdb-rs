@@ -1,14 +1,35 @@
-target/
+# Rust build output. Cargo.lock is not committed for a library crate.
+/target/
 Cargo.lock
-__pycache__/
-*.py[cod]
-*.swp
-*.swo
-*~
+**/*.rs.bk
+*.profraw
+*.profdata
+
+# Out-of-tree CMake builds of the bundled TidesDB (cargo builds it under target/)
+/build/
+/tidesdb-build/
+/cmake-build-*/
+
+# Database directories created by running the examples in the README and doc/rust.md
+/mydb/
+/mydb-v10/
+/mydb-backup/
+/example_db/
+/testdb/
+*.db
+
+# Editors and OS files
 .idea/
 .vscode/
 *.iml
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
-testdb/
-*.db
+
+# Patch leftovers and core dumps
+*.orig
+*.rej
+core
+core.*

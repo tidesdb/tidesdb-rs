@@ -1,0 +1,3 @@
+[submodule "tidesdb"]
+	path = tidesdb
+	url = https://github.com/tidesdb/tidesdb.git

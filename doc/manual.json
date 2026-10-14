@@ -1,0 +1,19 @@
+{
+  "$comment": "Table of contents for the TidesDB Rust binding docs, read by the TidesDB website (rendered under /docs/<major>/bindings/<lang>/). The binding version comes from this repo's release and is pinned per TidesDB major on the site — do not repeat it here. This currently points at the single reference page. To expand it like the core/TideSQL manuals, split the page into numbered part folders (e.g. 01-getting-started/, 02-guide/, 03-reference/) and list each part and chapter below; give each markdown file only 'title' and 'description' frontmatter — the website injects the slug.",
+  "title": "TidesDB Rust",
+  "tidesdb": "10.0.0",
+  "parts": [
+    {
+      "id": "reference",
+      "title": "API Reference",
+      "dir": "",
+      "chapters": [
+        {
+          "file": "rust.md",
+          "slug": "reference",
+          "title": "Rust API Reference"
+        }
+      ]
+    }
+  ]
+}
