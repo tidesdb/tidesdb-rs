@@ -144,7 +144,7 @@ impl<'db> Transaction<'db> {
         let secs = ttl
             .as_secs()
             .saturating_add(u64::from(ttl.subsec_nanos() > 0));
-        let secs = libc::time_t::try_from(secs).unwrap_or(libc::time_t::MAX);
+        let secs = ffi::time_t::try_from(secs).unwrap_or(ffi::time_t::MAX);
         self.put_raw(cf, key, value, secs)
     }
 
@@ -153,7 +153,7 @@ impl<'db> Transaction<'db> {
         cf: &ColumnFamily<'_>,
         key: &[u8],
         value: &[u8],
-        ttl: libc::time_t,
+        ttl: ffi::time_t,
     ) -> Result<()> {
         let result = unsafe {
             ffi::tidesdb_txn_put(
@@ -216,7 +216,7 @@ impl<'db> Transaction<'db> {
     /// Reads a key's expiry, as an absolute Unix timestamp in seconds. `Ok(None)` means the
     /// key exists and never expires.
     pub fn get_expiry(&self, cf: &ColumnFamily<'_>, key: &[u8]) -> Result<Option<i64>> {
-        let mut ttl: libc::time_t = -1;
+        let mut ttl: ffi::time_t = -1;
         let result = unsafe {
             ffi::tidesdb_txn_get_ttl(
                 self.txn(),

@@ -15,7 +15,15 @@
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
-use libc::{c_char, c_double, c_float, c_int, c_long, c_void, size_t, time_t};
+use libc::{c_char, c_double, c_float, c_int, c_long, c_void, size_t};
+
+/// The C `time_t` of the compiler that built TidesDB. `libc::time_t` is not used because it
+/// is 32-bit on 32-bit glibc targets even where the C toolchain defaults to a 64-bit
+/// `time_t`; build.rs asks the target compiler and sets `tidesdb_time_t_32` when it is 32-bit.
+#[cfg(not(tidesdb_time_t_32))]
+pub type time_t = i64;
+#[cfg(tidesdb_time_t_32)]
+pub type time_t = i32;
 
 /// The TidesDB release these bindings were written against.
 pub const TIDESDB_VERSION: &str = "10.2.1";

@@ -213,6 +213,8 @@ The build script links the system libraries the static TidesDB needs for the **t
 
 A 32-bit target's toolchain must provide `libatomic` (GCC cross toolchains do).
 
+The width of the C `time_t` differs between 32-bit toolchains: Debian and Ubuntu armhf (and others that define `_TIME_BITS=64`) use 64 bits, older ones 32. TidesDB passes `time_t` in commit-hook ops and TTL calls, so the build script asks the target C compiler which width it uses and the bindings follow it. Use the same toolchain for the whole build.
+
 Package-manager library directories (Homebrew, `/usr/local/lib`, MSYS2, pkgsrc) are added to the link search path only for native builds. When cross-compiling, the compression and allocator libraries must be built for the target. Make them visible through pkg-config, which the build uses only when cross-compiling is allowed (`PKG_CONFIG_ALLOW_CROSS=1`, with `PKG_CONFIG_SYSROOT_DIR` and `PKG_CONFIG_PATH` pointing into the target sysroot), or with `RUSTFLAGS="-L /path/to/target/libs"`. The same applies to a system TidesDB: when cross-compiling, pkg-config only finds one if it is configured for the target, and otherwise the bundled source is built.
 
 The CI cross-builds and tests `armv7-unknown-linux-gnueabihf` and `aarch64-unknown-linux-gnu` under QEMU, and cross-builds `x86_64-pc-windows-gnu` from Linux.

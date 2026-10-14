@@ -226,6 +226,19 @@ fn link_allocator() {
 
 /// Use a TidesDB found through pkg-config if it belongs to the bound major and is at least the
 /// bundled release. Returns the version linked, or `None` to build the bundled source.
+/// The `.pc` file pkg-config resolves `name` to.
+fn pc_file(name: &str) -> Option<PathBuf> {
+    let pkg_config = std::env::var("PKG_CONFIG").unwrap_or_else(|_| "pkg-config".into());
+    let out = std::process::Command::new(pkg_config)
+        .args(["--variable=pcfiledir", name])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let pc = PathBuf::from(dir).join(format!("{name}.pc"));
+    pc.exists().then_some(pc)
+}
+
 fn system_tidesdb(major: u64) -> Option<String> {
     if std::env::var_os("TIDESDB_NO_PKG_CONFIG").is_some() {
         return None;
@@ -236,6 +249,10 @@ fn system_tidesdb(major: u64) -> Option<String> {
         .env_metadata(true)
         .probe("tidesdb")
         .ok()?;
+    // rebuild when the installed TidesDB changes (an upgrade rewrites its .pc file)
+    if let Some(pc) = pc_file("tidesdb") {
+        println!("cargo:rerun-if-changed={}", pc.display());
+    }
     let crate_version = env!("CARGO_PKG_VERSION");
     let crate_major = major - TIDESDB_MAJOR_OFFSET;
     let usable = match parse_version(&found.version) {
@@ -275,6 +292,40 @@ fn system_tidesdb(major: u64) -> Option<String> {
         );
     }
     Some(lib.version)
+}
+
+/// The width of the C `time_t` on the target, in bits, asked of the target's C compiler.
+///
+/// It is not fixed per target: 32-bit glibc targets have a 32-bit `time_t` by default but a
+/// 64-bit one where the toolchain defines `_TIME_BITS=64` (Debian and Ubuntu armhf since the
+/// 64-bit time transition), while Rust's `libc::time_t` stays 32-bit. `time_t` is a field of
+/// `tidesdb_commit_op_t` and a TTL parameter, so the bindings must match the compiler that
+/// built TidesDB. Each candidate is checked with a compile-time assertion, so this also works
+/// when cross-compiling.
+fn c_time_t_bits() -> u32 {
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    for bits in [64u32, 32] {
+        let probe = out.join(format!("time_t_{bits}.c"));
+        std::fs::write(
+            &probe,
+            format!(
+                "#include <time.h>\n\
+                 typedef char tidesdb_time_t_probe[sizeof(time_t) == {} ? 1 : -1];\n",
+                bits / 8
+            ),
+        )
+        .unwrap();
+        let compiled = cc::Build::new()
+            .file(&probe)
+            .cargo_metadata(false)
+            .cargo_warnings(false)
+            .warnings(false)
+            .try_compile_intermediates();
+        if compiled.is_ok() {
+            return bits;
+        }
+    }
+    panic!("could not determine the size of the C time_t for this target");
 }
 
 /// The platform the crate is being built for, from Cargo's target cfg. A build script's own
@@ -385,9 +436,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=TIDESDB_NO_PKG_CONFIG");
     println!("cargo:rerun-if-env-changed=MINGW_PREFIX");
     println!("cargo:rustc-check-cfg=cfg(tidesdb_system)");
+    println!("cargo:rustc-check-cfg=cfg(tidesdb_time_t_32)");
 
     let major = tidesdb_major();
     let target = Target::from_env();
+
+    if c_time_t_bits() == 32 {
+        println!("cargo:rustc-cfg=tidesdb_time_t_32");
+    }
 
     if let Some(version) = system_tidesdb(major) {
         println!("cargo:rustc-cfg=tidesdb_system");

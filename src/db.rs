@@ -118,7 +118,7 @@ pub(crate) unsafe fn take_c_buffer(ptr: *mut u8, len: usize) -> Vec<u8> {
 /// Convert a C absolute expiry (`-1` = never) to an `Option`.
 // time_t is not i64 on every target, so the conversion is not always a no-op
 #[allow(clippy::useless_conversion)]
-pub(crate) fn ttl_from_c(ttl: libc::time_t) -> Option<i64> {
+pub(crate) fn ttl_from_c(ttl: ffi::time_t) -> Option<i64> {
     if ttl < 0 { None } else { Some(i64::from(ttl)) }
 }
 

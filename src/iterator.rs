@@ -151,7 +151,7 @@ impl Iterator<'_> {
     /// The current entry's expiry as an absolute Unix timestamp in seconds, `None` if it
     /// never expires.
     pub fn expires_at(&self) -> Result<Option<i64>> {
-        let mut ttl: libc::time_t = -1;
+        let mut ttl: ffi::time_t = -1;
         let result = unsafe { ffi::tidesdb_iter_ttl(self.iter, &mut ttl) };
         check_result(result, "failed to get ttl")?;
         Ok(ttl_from_c(ttl))
